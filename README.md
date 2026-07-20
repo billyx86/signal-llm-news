@@ -1,25 +1,46 @@
 # Signal — LLM & AI News Aggregator
 
-Editorial news aggregator for LLM/AI coverage. Built with TanStack Start, React 19, Vite, and Tailwind v4.
+**Signal** is an editorial news aggregator for LLM and AI coverage: models, research, open source, policy, industry, and tools.
 
-## Features
+## Live demo (static SPA)
 
-- ~30 seeded realistic stories across Models, Research, Open Source, Policy, Industry, Tools
-- Topic filters + full-text search
-- Featured lead story + dense wire feed
-- Story detail routes
-- Bookmarks persisted in localStorage (zustand)
-- Dark editorial design (ink neutrals + amber accent)
+A self-contained demo lives on the `gh-pages` branch (single `index.html` with seeded data, filters, search, story detail, bookmarks).
 
-## Scripts
+- Repo: https://github.com/billyx86/signal-llm-news
+- Branch: `gh-pages`
+
+## TanStack Start app (`main`)
+
+Full stack on `main`:
+
+- React 19 + TanStack Start / Router
+- Vite + Tailwind v4
+- zustand bookmarks (localStorage)
+- ~30 seeded stories in `src/data/news.ts`
+- Routes: `/`, `/story/$id`
+- Dark editorial UI (Newsreader + IBM Plex Sans, ink neutrals + amber accent)
+
+### Scripts
 
 ```bash
+npm install
 npm run dev        # 0.0.0.0:8080
 npm run build
 npm run typecheck
-bash startup.sh    # idempotent dev server start
+bash startup.sh    # idempotent non-blocking start
 ```
 
-## Stack
+### Layout
 
-TanStack Start / Router, React 19, Vite 7/8, Tailwind v4, zustand, lucide, zod.
+```
+src/
+  components/   Header, FeaturedStory, StoryCard, TopicFilters, Footer
+  data/news.ts  Seeded stories + filters
+  lib/store.ts  Bookmarks (zustand + persist)
+  lib/time.ts   Relative timestamps
+  routes/       __root, index, story.$id
+```
+
+## Design
+
+Cool ink neutrals, single amber accent, magazine density, hairline dividers, strong type hierarchy. Not purple AI gradient slop.
