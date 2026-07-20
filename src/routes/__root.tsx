@@ -1,4 +1,11 @@
-import { HeadContent, Outlet, Scripts, createRootRoute } from '@tanstack/react-router'
+/// <reference types="vite/client" />
+import {
+  HeadContent,
+  Outlet,
+  Scripts,
+  createRootRoute,
+} from '@tanstack/react-router'
+import type { ReactNode } from 'react'
 import { Header } from '@/components/Header'
 import { Footer } from '@/components/Footer'
 import appCss from '@/styles.css?url'
@@ -8,9 +15,7 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      {
-        title: 'Signal — LLM & AI News',
-      },
+      { title: 'Signal — LLM & AI News' },
       {
         name: 'description',
         content:
@@ -20,16 +25,25 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: 'stylesheet', href: appCss },
+      { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },
       { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
-      { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossOrigin: 'anonymous' },
+      {
+        rel: 'preconnect',
+        href: 'https://fonts.gstatic.com',
+        crossOrigin: 'anonymous',
+      },
     ],
   }),
   component: RootComponent,
+  shellComponent: RootDocument,
   notFoundComponent: () => (
     <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
       <h1 className="font-display text-3xl text-ink-50">Story not found</h1>
       <p className="mt-2 text-ink-400">That briefing is not in the Signal archive.</p>
-      <a href="/" className="mt-6 inline-block text-sm text-amber-soft underline-offset-4 hover:underline">
+      <a
+        href="/"
+        className="mt-6 inline-block text-sm text-amber-soft underline-offset-4 hover:underline"
+      >
         Back to feed
       </a>
     </div>
@@ -38,16 +52,24 @@ export const Route = createRootRoute({
 
 function RootComponent() {
   return (
+    <>
+      <Header />
+      <main className="flex-1">
+        <Outlet />
+      </main>
+      <Footer />
+    </>
+  )
+}
+
+function RootDocument({ children }: { children: ReactNode }) {
+  return (
     <html lang="en" className="dark">
       <head>
         <HeadContent />
       </head>
       <body className="flex min-h-screen flex-col bg-ink-950 font-sans text-ink-100 antialiased">
-        <Header />
-        <main className="flex-1">
-          <Outlet />
-        </main>
-        <Footer />
+        {children}
         <Scripts />
       </body>
     </html>
