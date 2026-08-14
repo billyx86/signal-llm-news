@@ -23,15 +23,14 @@ export const useBookmarkStore = create<BookmarkState>()(
     }),
     { 
       name: 'signal-bookmarks',
-      onRehydrateStorage: () => (state) => {
-        // Listen for storage events to sync across tabs
+      onRehydrateStorage: () => {
         if (typeof window !== 'undefined') {
           const handleStorageChange = (e: StorageEvent) => {
             if (e.key === 'signal-bookmarks' && e.newValue) {
               try {
                 const parsed = JSON.parse(e.newValue)
                 if (parsed.state && Array.isArray(parsed.state.bookmarks)) {
-                  set({ bookmarks: parsed.state.bookmarks })
+                  useBookmarkStore.setState({ bookmarks: parsed.state.bookmarks })
                 }
               } catch {}
             }
