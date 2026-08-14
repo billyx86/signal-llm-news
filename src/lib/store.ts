@@ -21,6 +21,25 @@ export const useBookmarkStore = create<BookmarkState>()(
       isBookmarked: (id) => get().bookmarks.includes(id),
       clearBookmarks: () => set({ bookmarks: [] }),
     }),
-    { name: 'signal-bookmarks' },
+    { 
+      name: 'signal-bookmarks',
+      onRehydrateStorage: () => (state) => {
+        // Listen for storage events to sync across tabs
+        if (typeof window !== 'undefined') {
+          const handleStorageChange = (e: StorageEvent) => {
+            if (e.key === 'signal-bookmarks' && e.newValue) {
+              try {
+                const parsed = JSON.parse(e.newValue)
+                if (parsed.state && Array.isArray(parsed.state.bookmarks)) {
+                  set({ bookmarks: parsed.state.bookmarks })
+                }
+              } catch {}
+            }
+          }
+          window.addEventListener('storage', handleStorageChange)
+          return () => window.removeEventListener('storage', handleStorageChange)
+        }
+      }
+    },
   ),
 )
