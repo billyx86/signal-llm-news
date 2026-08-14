@@ -2,6 +2,16 @@
 
 **Signal** is an editorial news aggregator for LLM and AI coverage: models, research, open source, policy, industry, and tools.
 
+## ✨ New Features
+
+- **Keyboard Navigation**: `j/k` to navigate stories, `/` to focus search
+- **Accessibility**: Skip links, ARIA labels, improved focus management
+- **Cross-Tab Sync**: Bookmarks sync across browser tabs
+- **RSS Feeds**: Automated ingestion from AI news sources
+- **Type Safety**: Improved TypeScript types and readonly data structures
+- **Tests**: Vitest setup with coverage for news utilities
+- **Documentation**: Contributing guide and code style documentation
+
 ## Live demo (static SPA)
 
 A self-contained demo lives on the `gh-pages` branch (single `index.html` with seeded data, filters, search, story detail, bookmarks).

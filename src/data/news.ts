@@ -18,16 +18,18 @@ export interface Story {
   publishedAt: string
   featured?: boolean
   readTime: number
+  tags?: readonly string[]
+  updatedAt?: string
 }
 
-export const TOPICS: Topic[] = [
+export const TOPICS = Object.freeze([
   'Models',
   'Research',
   'Open Source',
   'Policy',
   'Industry',
-  'Tools',
-]
+  'Tools'
+] as const)
 
 const hoursAgo = (h: number) =>
   new Date(Date.now() - h * 60 * 60 * 1000).toISOString()
@@ -439,7 +441,7 @@ export function filterStories(opts: {
   query?: string
   bookmarkedOnly?: boolean
   bookmarkIds?: string[]
-}): Story[] {
+}): readonly Story[] {
   const q = opts.query?.trim().toLowerCase() ?? ''
   return stories.filter((s) => {
     if (opts.topic && opts.topic !== 'All' && s.topic !== opts.topic) return false
@@ -448,5 +450,5 @@ export function filterStories(opts: {
     if (!q) return true
     const hay = `${s.title} ${s.summary} ${s.source} ${s.topic} ${s.author}`.toLowerCase()
     return hay.includes(q)
-  })
+  }) as readonly Story[]
 }
