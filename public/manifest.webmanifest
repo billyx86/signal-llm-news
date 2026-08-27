@@ -1,0 +1,27 @@
+{
+  "name": "Signal — LLM & AI News",
+  "short_name": "Signal",
+  "description": "A calm, signal-over-noise digest of LLM and AI news with live RSS updates.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0a0b0e",
+  "theme_color": "#0a0b0e",
+  "categories": ["news", "technology"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
