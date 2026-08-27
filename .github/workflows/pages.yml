@@ -1,7 +1,11 @@
 name: Deploy static Signal SPA
 on:
+  # Only the gh-pages branch holds the deployable static SPA. `main` is the
+  # TanStack Start app and is never deployed by this workflow (it checks out
+  # ref: gh-pages), so triggering on `main` just produced a 2s failure against
+  # the environment protection rules.
   push:
-    branches: [gh-pages, main]
+    branches: [gh-pages]
   workflow_dispatch:
 permissions:
   contents: read
