@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { z } from 'zod'
+import { useMemo } from 'react'
 import { FeaturedStory } from '@/components/FeaturedStory'
 import { StoryCard } from '@/components/StoryCard'
 import { TopicFilters, type TopicFilter } from '@/components/TopicFilters'
@@ -7,10 +8,12 @@ import {
   TOPICS,
   filterStories,
   getFeaturedStory,
+  stories,
   type Topic,
 } from '@/data/news'
 import { useBookmarkStore } from '@/lib/store'
 import { useKeyboardShortcuts } from '@/lib/keyboard'
+import { useFeedAutoRefresh, useFeedStore, mergeStories } from '@/lib/feed'
 
 const searchSchema = z.object({
   topic: z
@@ -33,13 +36,20 @@ function HomePage() {
   const featured = getFeaturedStory()
   useKeyboardShortcuts()
 
+  // Live RSS feed: auto-refresh + poll while the tab is visible.
+  useFeedAutoRefresh()
+  const liveStories = useFeedStore((s) => s.liveStories)
+
   const activeTopic = (TOPICS.includes(topic as Topic) ? topic : 'All') as TopicFilter
+
+  const allStories = useMemo(() => mergeStories(stories, liveStories), [liveStories])
 
   const filtered = filterStories({
     topic: activeTopic,
     query: q,
     bookmarkedOnly: saved,
     bookmarkIds: bookmarks,
+    stories: allStories,
   })
 
   const feed = filtered.filter((s) => s.id !== featured.id || activeTopic !== 'All' || q || saved)
