@@ -1,24 +1,50 @@
-import { Link, createFileRoute, notFound } from '@tanstack/react-router'
+import { Link, createFileRoute } from '@tanstack/react-router'
+import { useMemo } from 'react'
 import { ArrowLeft, Bookmark, ExternalLink } from 'lucide-react'
 import { getStoryById, stories } from '@/data/news'
 import { relativeTime } from '@/lib/time'
 import { useBookmarkStore } from '@/lib/store'
+import { useFeedStore } from '@/lib/feed'
+import { ShareButton } from '@/components/ShareButton'
+import { useShareStore } from '@/lib/share-store'
 
 export const Route = createFileRoute('/story/$id')({
-  loader: ({ params }) => {
-    const story = getStoryById(params.id)
-    if (!story) throw notFound()
-    return story
-  },
   component: StoryPage,
 })
 
 function StoryPage() {
-  const story = Route.useLoaderData()
-  const bookmarked = useBookmarkStore((s) => s.bookmarks.includes(story.id))
-  const toggle = useBookmarkStore((s) => s.toggleBookmark)
+  const { id } = Route.useParams()
+  const liveStories = useFeedStore((s) => s.liveStories)
 
-  const related = stories
+  // Resolve the story from the live RSS feed first, then the seeded archive.
+  // The deploy target is a static SPA, so lookup happens client-side instead
+  // of in a loader.
+  const story = useMemo(() => {
+    return liveStories.find((s) => s.id === id) ?? getStoryById(id)
+  }, [liveStories, id])
+
+  const bookmarked = useBookmarkStore((s) => s.bookmarks.includes(story?.id ?? ''))
+  const toggle = useBookmarkStore((s) => s.toggleBookmark)
+  const shareCount = useShareStore((s) => s.counts[story?.id ?? ''] ?? 0)
+
+  if (!story) {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6">
+        <h1 className="font-display text-2xl text-ink-200">Story not found</h1>
+        <p className="mt-2 text-sm text-ink-500">
+          It may have been removed, or the feed item it came from has rotated out.
+        </p>
+        <Link
+          to="/"
+          className="mt-6 inline-block text-xs font-semibold uppercase tracking-wider text-amber-soft hover:text-amber-accent"
+        >
+          Back to feed
+        </Link>
+      </div>
+    )
+  }
+
+  const related = [...liveStories, ...stories]
     .filter((s) => s.topic === story.topic && s.id !== story.id)
     .slice(0, 4)
 
@@ -67,6 +93,12 @@ function StoryPage() {
               <Bookmark className="h-3.5 w-3.5" fill={bookmarked ? 'currentColor' : 'none'} />
               {bookmarked ? 'Saved' : 'Save story'}
             </button>
+            <ShareButton story={story} variant="full" />
+            {shareCount > 0 && (
+              <span className="text-xs text-ink-500">
+                Shared {shareCount} {shareCount === 1 ? 'time' : 'times'}
+              </span>
+            )}
             <a
               href={story.sourceUrl}
               target="_blank"

@@ -441,9 +441,12 @@ export function filterStories(opts: {
   query?: string
   bookmarkedOnly?: boolean
   bookmarkIds?: string[]
+  /** Story collection to filter. Defaults to the seeded archive. */
+  stories?: readonly Story[]
 }): readonly Story[] {
   const q = opts.query?.trim().toLowerCase() ?? ''
-  return stories.filter((s) => {
+  const source = opts.stories ?? stories
+  return source.filter((s) => {
     if (opts.topic && opts.topic !== 'All' && s.topic !== opts.topic) return false
     if (opts.bookmarkedOnly && opts.bookmarkIds && !opts.bookmarkIds.includes(s.id))
       return false

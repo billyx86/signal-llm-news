@@ -3,6 +3,7 @@ import { Bookmark } from 'lucide-react'
 import type { Story } from '@/data/news'
 import { relativeTime } from '@/lib/time'
 import { useBookmarkStore } from '@/lib/store'
+import { ShareButton } from '@/components/ShareButton'
 
 interface Props {
   story: Story
@@ -41,22 +42,25 @@ export function StoryCard({ story, dense }: Props) {
             </p>
           )}
         </div>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            toggle(story.id)
-          }}
-          className={`relative z-10 shrink-0 rounded-sm border p-1.5 transition ${
-            bookmarked
-              ? 'border-amber-accent/50 bg-amber-accent/10 text-amber-soft'
-              : 'border-ink-700/60 text-ink-500 hover:border-ink-500 hover:text-ink-200'
-          }`}
-          aria-label={bookmarked ? 'Remove bookmark' : 'Save story'}
-        >
-          <Bookmark className="h-3.5 w-3.5" fill={bookmarked ? 'currentColor' : 'none'} />
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <ShareButton story={story} />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              toggle(story.id)
+            }}
+            className={`relative z-10 shrink-0 rounded-sm border p-1.5 transition ${
+              bookmarked
+                ? 'border-amber-accent/50 bg-amber-accent/10 text-amber-soft'
+                : 'border-ink-700/60 text-ink-500 hover:border-ink-500 hover:text-ink-200'
+            }`}
+            aria-label={bookmarked ? 'Remove bookmark' : 'Save story'}
+          >
+            <Bookmark className="h-3.5 w-3.5" fill={bookmarked ? 'currentColor' : 'none'} />
+          </button>
+        </div>
       </div>
     </article>
   )
