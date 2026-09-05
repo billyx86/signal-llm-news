@@ -218,18 +218,59 @@ export async function fetchRSSFeed(
 }
 
 /**
+ * How long a single upstream feed may take before we give up on it.
+ *
+ * A feed that connects but never responds (or crawls its body) would otherwise
+ * hang the whole {@link fetchAllFeeds} union, leaving the UI stuck refreshing.
+ * Capping each fetch means a hung feed is treated as a per-feed failure
+ * instead of blocking the rest of the rotation.
+ */
+export const DEFAULT_FEED_TIMEOUT_MS = 15_000
+
+/** Optional tuning knobs for {@link fetchAllFeeds}. */
+export interface FetchAllFeedsOptions {
+  /** Per-feed abort timeout in milliseconds (default {@link DEFAULT_FEED_TIMEOUT_MS}). */
+  timeoutMs?: number
+}
+
+/**
+ * Fetch and parse a single feed with a hard per-feed timeout.
+ *
+ * Wraps {@link fetchFeedWithStatus} in an {@link AbortController} that aborts
+ * after `timeoutMs`, so a hung feed resolves as a failure rather than stalling
+ * the caller. The timer is always cleared once the fetch settles.
+ */
+async function fetchFeedWithTimeout(
+  feed: RSSFeedConfig,
+  timeoutMs: number,
+): Promise<FeedFetchResult> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetchFeedWithStatus(feed.url, feed.name, controller.signal)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
  * Fetch every enabled feed in parallel.
  *
  * Uses per-feed status tracking so one failing feed degrades gracefully:
  * callers get the union of successful items plus `succeeded`/`failed` counts
- * they can surface to the user.
+ * they can surface to the user. Each fetch is also bounded by a per-feed
+ * timeout ({@link FetchAllFeedsOptions.timeoutMs}, default
+ * {@link DEFAULT_FEED_TIMEOUT_MS}) so a single hung feed can never stall the
+ * whole refresh — it is counted in `failed` instead.
  */
 export async function fetchAllFeeds(
   feeds: RSSFeedConfig[] = RSS_FEEDS,
+  opts: FetchAllFeedsOptions = {},
 ): Promise<FeedResult> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_FEED_TIMEOUT_MS
   const enabledFeeds = feeds.filter((f) => f.enabled)
   const results = await Promise.all(
-    enabledFeeds.map((feed) => fetchFeedWithStatus(feed.url, feed.name)),
+    enabledFeeds.map((feed) => fetchFeedWithTimeout(feed, timeoutMs)),
   )
 
   let succeeded = 0

@@ -98,14 +98,22 @@ Convenience wrapper around `fetchFeedWithStatus` that returns just the items
 and swallows failures. Use when you only need the data and don't care whether
 the feed succeeded.
 
-### `fetchAllFeeds(feeds?: RSSFeedConfig[]): Promise<FeedResult>`
+### `fetchAllFeeds(feeds?: RSSFeedConfig[], opts?: FetchAllFeedsOptions): Promise<FeedResult>`
 
-Fetch every **enabled** feed in parallel (defaults to `RSS_FEEDS`).
+Fetch every **enabled** feed in parallel (defaults to `RSS_FEEDS`). Each fetch
+is bounded by a per-feed abort timeout (`opts.timeoutMs`, default
+`DEFAULT_FEED_TIMEOUT_MS` = 15 s) so a hung feed counts as a failure instead of
+stalling the whole batch.
 
 ```ts
 const { items, succeeded, failed } = await fetchAllFeeds()
+// or with a tighter per-feed deadline:
+await fetchAllFeeds(RSS_FEEDS, { timeoutMs: 5000 })
 console.log(`${succeeded} feeds ok, ${failed} failed, ${items.length} items`)
 ```
+
+`FetchAllFeedsOptions` is `{ timeoutMs?: number }`. `DEFAULT_FEED_TIMEOUT_MS`
+is exported so callers can tune or reference the default.
 
 ### `categoryToTopic(category?: string): Topic`
 
