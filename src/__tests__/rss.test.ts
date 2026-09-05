@@ -8,6 +8,7 @@ import {
   fetchAllFeeds,
   categoryToTopic,
   RSS_FEEDS,
+  DEFAULT_FEED_TIMEOUT_MS,
 } from '@/lib/rss'
 
 const RSS_SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
@@ -199,6 +200,49 @@ describe('fetchAllFeeds', () => {
 
   it('ships at least one enabled feed by default', () => {
     expect(RSS_FEEDS.some((f) => f.enabled)).toBe(true)
+  })
+
+  it('treats a hung feed as a per-feed failure after the timeout', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          )
+        })
+      }),
+    )
+
+    const p = fetchAllFeeds(
+      [{ name: 'Hung', url: 'https://hung.example.com/rss', enabled: true }],
+      { timeoutMs: 200 },
+    )
+    await vi.advanceTimersByTimeAsync(250)
+    await expect(p).resolves.toMatchObject({ succeeded: 0, failed: 1, items: [] })
+    vi.useRealTimers()
+  })
+
+  it('still resolves a quick feed and clears its timer (no stray abort)', async () => {
+    vi.useFakeTimers()
+    const fetchSpy = vi.fn(async () => new Response(RSS_SAMPLE, { status: 200 }))
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const p = fetchAllFeeds(
+      [{ name: 'Quick', url: 'https://quick.example.com/rss', enabled: true }],
+      { timeoutMs: 200 },
+    )
+    const result = await p
+    expect(result).toMatchObject({ succeeded: 1, failed: 0 })
+    expect(result.items).toHaveLength(2)
+    // The quick feed finished well before the 200ms timeout.
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  it('exposes a sensible default timeout', () => {
+    expect(DEFAULT_FEED_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000)
   })
 })
 
