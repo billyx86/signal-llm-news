@@ -71,7 +71,10 @@ A full API reference with copy-paste examples is in [`docs/rss-api.md`](docs/rss
    **5 minutes** (background tabs pause polling). A manual **Sync** button in
    the header triggers an immediate refresh.
 2. **Fetch** — every enabled feed is fetched in parallel; one dead feed degrades
-   gracefully and never blocks the others.
+   gracefully and never blocks the others. Each fetch is also bounded by a
+   per-feed timeout (default **15 s**, `DEFAULT_FEED_TIMEOUT_MS`) so a feed
+   that connects but never responds is dropped as a failure instead of stalling
+   the whole refresh.
 3. **Parse** — each feed is normalised to `RSSItem[]`, handling RSS 2.0
    `<item>` and Atom `<entry>`, `<![CDATA[…]]>` sections, and HTML entities.
 4. **Merge** — live items are prepended to the seeded archive, de-duplicated by
@@ -135,7 +138,8 @@ const { items, succeeded, failed } = await fetchAllFeeds(myFeeds)
 | `parseRSS(xml, source?)`        | Parse an RSS/Atom document into `RSSItem[]`. Pure & synchronous.     |
 | `fetchRSSFeed(url, source?, signal?)` | Fetch + parse a single feed; returns `RSSItem[]`, swallows failures. |
 | `fetchFeedWithStatus(url, source?, signal?)` | Like `fetchRSSFeed` but reports `{ items, ok }` so callers can distinguish success from failure. |
-| `fetchAllFeeds(feeds?)`         | Fetch every enabled feed in parallel; returns `FeedResult`.         |
+| `fetchAllFeeds(feeds?, opts?)`  | Fetch every enabled feed in parallel; returns `FeedResult`. `opts.timeoutMs` sets the per-feed timeout (default `DEFAULT_FEED_TIMEOUT_MS`, 15 s). |
+| `DEFAULT_FEED_TIMEOUT_MS`       | Per-feed abort timeout used by `fetchAllFeeds` when `opts.timeoutMs` is unset. |
 | `categoryToTopic(category?)`    | Map a feed category to an editorial `Topic` (`'Industry'` fallback). |
 | `extractTag(xml, tag)`          | Pull the first `<tag>` contents (CDATA + entity aware).              |
 | `decodeEntities(text)` / `stripCdata(text)` | Low-level text helpers used by `extractTag`.        |
@@ -154,6 +158,12 @@ The module is built so that **a single bad feed can never break the digest**:
 - **Per-feed counting** — `fetchAllFeeds` returns `succeeded` and `failed`
   counts so the UI (the header Sync button) can show a healthy/greyed state and
   surface partial failure without a hard error.
+- **Per-feed timeout** — every fetch in `fetchAllFeeds` is wrapped in an
+  `AbortController` that fires after `opts.timeoutMs` (default
+  `DEFAULT_FEED_TIMEOUT_MS`, 15 s). A hung feed resolves as a failure and is
+  counted in `failed`, so it can never stall the parallel batch or the UI. The
+  timer is cleared in a `finally` block once the fetch settles, so a fast feed
+  never gets aborted late by a stray timer.
 - **Parse resilience** — `parseRSS` drops items missing a title or link and
   never throws on malformed markup; unknown HTML entities are left as-is.
 - **Polling guard** — `useFeedAutoRefresh` in `feed.ts` is idempotent: a
