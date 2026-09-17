@@ -74,7 +74,11 @@ A full API reference with copy-paste examples is in [`docs/rss-api.md`](docs/rss
    gracefully and never blocks the others. Each fetch is also bounded by a
    per-feed timeout (default **15 s**, `DEFAULT_FEED_TIMEOUT_MS`) so a feed
    that connects but never responds is dropped as a failure instead of stalling
-   the whole refresh.
+   the whole refresh. In the browser, fetches are routed through a
+   **server-side proxy** (`src/lib/feed-proxy.ts` → `feed-proxy.server.ts`) so
+   feeds without permissive CORS headers still load; the proxy only ever fetches
+   URLs in the `RSS_FEEDS` allowlist (see the note below). Outside a browser
+   (SSR, unit tests) it falls back to a direct `fetch`.
 3. **Parse** — each feed is normalised to `RSSItem[]`, handling RSS 2.0
    `<item>` and Atom `<entry>`, `<![CDATA[…]]>` sections, and HTML entities.
 4. **Merge** — live items are prepended to the seeded archive, de-duplicated by
@@ -170,9 +174,11 @@ The module is built so that **a single bad feed can never break the digest**:
   refresh already in flight is never stacked, and polling pauses in hidden
   tabs to keep the performance impact minimal.
 
-> ⚠️ Feeds are fetched **client-side** from the browser. If a feed does not
-> send permissive CORS headers it will fail from the browser (and count as a
-> failure) even though it works in a terminal. For production you can front the
-> fetches with a small server-side proxy; `parseRSS` and the types are all
-> server-safe and can be reused there unchanged.
+> 🔒 **Server-side feed proxy (CORS)** — In the browser, feed fetches are routed
+> through a server function (`src/lib/feed-proxy.ts`) that fetches upstream on
+> the server and returns the raw XML, so feeds without permissive CORS headers
+> still load instead of silently failing. Because a `?url=` proxy is otherwise an
+> SSRF vector, the handler **only** fetches URLs already present in
+> `RSS_FEEDS`; any other URL is rejected with `403` before a request is made.
+> Outside a browser (SSR / unit tests) the pipeline uses a direct `fetch`.
 

@@ -5,12 +5,42 @@ import {
   RSS_FEEDS,
   type FeedResult,
   type RSSItem,
+  type FeedTransport,
+  type FeedTransportResponse,
 } from '@/lib/rss'
 import type { Story, Topic } from '@/data/news'
 import { categoryToTopic } from '@/lib/rss'
 
 /** How often the feed auto-refreshes while the tab is visible. */
 export const REFRESH_INTERVAL_MS = 5 * 60 * 1000
+
+/**
+ * Pick the transport used to fetch feed bodies.
+ *
+ * In a real **browser** we route each feed through the server-side proxy
+ * ({@link import('./feed-proxy').fetchFeedXml}) so feeds without permissive
+ * CORS headers still load (issue #13). The server module is imported
+ * **dynamically** so it is never pulled in — and never executed — during SSR
+ * or the jsdom unit tests, where a plain client `fetch` is used instead (and
+ * is stubbed by the tests).
+ *
+ * @returns the proxy transport in a browser, or `undefined` elsewhere (which
+ *   makes `fetchAllFeeds` fall back to the default direct-`fetch` transport).
+ */
+async function resolveFeedTransport(): Promise<FeedTransport | undefined> {
+  const env = import.meta.env
+  const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined'
+  // `MODE === 'test'` is how vitest identifies itself in this project.
+  if (!isBrowser || env.SSR || env.MODE === 'test') return undefined
+
+  const { fetchFeedXml } = await import('./feed-proxy')
+  return (url: string, signal?: AbortSignal): Promise<FeedTransportResponse> =>
+    fetchFeedXml({ data: { url }, signal }).then((res) => ({
+      ok: res.ok,
+      status: res.status,
+      text: () => Promise.resolve(res.body),
+    }))
+}
 
 interface FeedState {
   /** Live stories merged in from upstream feeds (newest first). */
@@ -57,7 +87,11 @@ export const useFeedStore = create<FeedState>()((set, get) => ({
     if (get().isRefreshing) return
     set({ isRefreshing: true })
     try {
-      const result: FeedResult = await fetchAllFeeds()
+      // In a browser this resolves the server-proxy transport (bypassing
+      // browser CORS); elsewhere it is undefined and fetchAllFeeds falls back
+      // to a direct fetch.
+      const transport = await resolveFeedTransport()
+      const result: FeedResult = await fetchAllFeeds(RSS_FEEDS, transport ? { transport } : {})
       const now = new Date().toISOString()
       const liveStories = result.items
         .map((item) => toStory(item, feedCategoryBySource.get(item.source)))
