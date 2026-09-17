@@ -168,19 +168,60 @@ export interface FeedFetchResult {
 }
 
 /**
+ * The subset of a {@link Response} the fetch pipeline actually needs.
+ *
+ * Abstracting this (instead of taking a real {@link Response}) lets a
+ * non-browser transport — e.g. a server-side proxy that sidesteps browser
+ * CORS — supply feed bodies without faking a full `Response` object.
+ */
+export interface FeedTransportResponse {
+  ok: boolean
+  status: number
+  text: () => Promise<string>
+}
+
+/**
+ * A function that fetches the raw XML body of a single feed.
+ *
+ * The default transport issues a plain browser `fetch`. A transport backed by
+ * a server-side proxy (see `feed-proxy.server.ts`) can be substituted to
+ * bypass browser CORS for feeds that don't send permissive headers.
+ */
+export type FeedTransport = (
+  url: string,
+  signal?: AbortSignal,
+) => Promise<FeedTransportResponse>
+
+/**
+ * Default transport: a direct `fetch` of the feed URL. Works wherever the
+ * feed sends permissive CORS headers (or in SSR/tests, where CORS does not
+ * apply). This is the fallback when no proxy is available.
+ */
+export const defaultFeedTransport: FeedTransport = (url, signal) =>
+  fetch(url, { signal }).then((response) => ({
+    ok: response.ok,
+    status: response.status,
+    text: () => response.text(),
+  }))
+
+/**
  * Fetch and parse a single feed, distinguishing success from failure.
  *
  * @param url - Feed URL.
  * @param source - Label for items returned from this feed.
  * @param signal - Optional AbortSignal to cancel an in-flight request.
+ * @param transport - How the feed body is retrieved. Defaults to a direct
+ *   browser `fetch` ({@link defaultFeedTransport}); pass a server-proxy
+ *   transport to bypass browser CORS.
  */
 export async function fetchFeedWithStatus(
   url: string,
   source = 'RSS',
   signal?: AbortSignal,
+  transport: FeedTransport = defaultFeedTransport,
 ): Promise<FeedFetchResult> {
   try {
-    const response = await fetch(url, { signal })
+    const response = await transport(url, signal)
     if (!response.ok) {
       console.error(`RSS feed returned HTTP ${response.status}: ${url}`)
       return { items: [], ok: false }
@@ -231,6 +272,12 @@ export const DEFAULT_FEED_TIMEOUT_MS = 15_000
 export interface FetchAllFeedsOptions {
   /** Per-feed abort timeout in milliseconds (default {@link DEFAULT_FEED_TIMEOUT_MS}). */
   timeoutMs?: number
+  /**
+   * How each feed body is retrieved. Defaults to a direct browser `fetch`
+   * ({@link defaultFeedTransport}); pass a server-proxy transport to bypass
+   * browser CORS for feeds that lack permissive headers.
+   */
+  transport?: FeedTransport
 }
 
 /**
@@ -243,11 +290,12 @@ export interface FetchAllFeedsOptions {
 async function fetchFeedWithTimeout(
   feed: RSSFeedConfig,
   timeoutMs: number,
+  transport: FeedTransport = defaultFeedTransport,
 ): Promise<FeedFetchResult> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetchFeedWithStatus(feed.url, feed.name, controller.signal)
+    return await fetchFeedWithStatus(feed.url, feed.name, controller.signal, transport)
   } finally {
     clearTimeout(timer)
   }
@@ -262,15 +310,19 @@ async function fetchFeedWithTimeout(
  * timeout ({@link FetchAllFeedsOptions.timeoutMs}, default
  * {@link DEFAULT_FEED_TIMEOUT_MS}) so a single hung feed can never stall the
  * whole refresh — it is counted in `failed` instead.
+ *
+ * @param feeds - Feeds to fetch (default {@link RSS_FEEDS}).
+ * @param opts - Timeout and optional transport (see {@link FetchAllFeedsOptions}).
  */
 export async function fetchAllFeeds(
   feeds: RSSFeedConfig[] = RSS_FEEDS,
   opts: FetchAllFeedsOptions = {},
 ): Promise<FeedResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_FEED_TIMEOUT_MS
+  const transport = opts.transport ?? defaultFeedTransport
   const enabledFeeds = feeds.filter((f) => f.enabled)
   const results = await Promise.all(
-    enabledFeeds.map((feed) => fetchFeedWithTimeout(feed, timeoutMs)),
+    enabledFeeds.map((feed) => fetchFeedWithTimeout(feed, timeoutMs, transport)),
   )
 
   let succeeded = 0
