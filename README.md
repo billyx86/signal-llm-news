@@ -180,5 +180,9 @@ The module is built so that **a single bad feed can never break the digest**:
 > still load instead of silently failing. Because a `?url=` proxy is otherwise an
 > SSRF vector, the handler **only** fetches URLs already present in
 > `RSS_FEEDS`; any other URL is rejected with `403` before a request is made.
+> The proxy also keeps a short-TTL in-process cache per feed (120 s, see
+> `FEED_CACHE_TTL_MS` in `feed-proxy.server.ts`) and revalidates expired
+> entries with `If-None-Match` / `If-Modified-Since`, so multiple tabs or
+> users polling the same feed do not each hit the upstream publisher.
 > Outside a browser (SSR / unit tests) the pipeline uses a direct `fetch`.
 
