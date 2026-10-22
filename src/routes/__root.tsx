@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { Header } from '@/components/Header'
+import { FeedHealth } from '@/components/FeedHealth'
 import { Footer } from '@/components/Footer'
 import appCss from '@/styles.css?url'
 

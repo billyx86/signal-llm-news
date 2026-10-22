@@ -4,6 +4,7 @@ import {
   fetchAllFeeds,
   RSS_FEEDS,
   type FeedResult,
+  type FeedStatus,
   type RSSItem,
   type FeedTransport,
   type FeedTransportResponse,
@@ -49,10 +50,33 @@ interface FeedState {
   failedFeeds: number
   /** Feeds that succeeded on the last refresh. */
   succeededFeeds: number
+  /** Per-feed health snapshot from the last refresh (empty until one completes). */
+  feedStatuses: FeedStatus[]
   lastRefreshedAt: string | null
   isRefreshing: boolean
   hasRefreshed: boolean
   refresh: () => Promise<void>
+}
+
+/**
+ * Classify a per-feed snapshot into the UI's health vocabulary.
+ *
+ * - `failed` — the last fetch errored (HTTP error / timeout / network throw).
+ * - `stale`  — the last *successful* fetch is older than `staleAfterMs`
+ *   (2× the refresh interval), so the data may be out of date.
+ * - `ok`     — everything else (fetched recently, no error).
+ *
+ * Pure and deterministic given `now`, so it is trivially testable.
+ */
+export function classifyFeedHealth(
+  status: FeedStatus,
+  now = Date.now(),
+  staleAfterMs = 2 * REFRESH_INTERVAL_MS,
+): 'ok' | 'stale' | 'failed' {
+  if (!status.ok) return 'failed'
+  const fetched = new Date(status.fetchedAt).getTime()
+  if (!Number.isNaN(fetched) && now - fetched > staleAfterMs) return 'stale'
+  return 'ok'
 }
 
 function toStory(item: RSSItem, feedCategory?: string): Story {
@@ -78,6 +102,7 @@ export const useFeedStore = create<FeedState>()((set, get) => ({
   liveStories: [],
   failedFeeds: 0,
   succeededFeeds: 0,
+  feedStatuses: [],
   lastRefreshedAt: null,
   isRefreshing: false,
   hasRefreshed: false,
@@ -100,6 +125,7 @@ export const useFeedStore = create<FeedState>()((set, get) => ({
         liveStories,
         failedFeeds: result.failed,
         succeededFeeds: result.succeeded,
+        feedStatuses: result.feedStatuses,
         lastRefreshedAt: now,
         isRefreshing: false,
         hasRefreshed: true,

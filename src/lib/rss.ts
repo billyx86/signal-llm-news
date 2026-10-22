@@ -54,11 +54,28 @@ export interface RSSItem {
   source: string
 }
 
+/** Per-feed health snapshot, captured once per refresh. */
+export interface FeedStatus {
+  name: string
+  url: string
+  ok: boolean
+  /** HTTP status from the transport, or `null` (timeout / network throw). */
+  status: number | null
+  /** `HTTP <status>`, `timeout`, `network`, or `null` on success. */
+  reason: string | null
+  /** Number of items returned by this feed on the last fetch. */
+  itemCount: number
+  /** ISO timestamp of the refresh this status belongs to. */
+  fetchedAt: string
+}
+
 /** Outcome of a multi-feed fetch, including per-feed success/failure counts. */
 export interface FeedResult {
   items: RSSItem[]
   succeeded: number
   failed: number
+  /** Health of every enabled feed, in the order it appears in `feeds`. */
+  feedStatuses: FeedStatus[]
 }
 
 /** Named entities that commonly appear in feed text (beyond the XML core set). */
@@ -165,6 +182,17 @@ function atomLink(entryXml: string): string | null {
 export interface FeedFetchResult {
   items: RSSItem[]
   ok: boolean
+  /**
+   * HTTP status code when the transport returned a non-ok response; `null` on
+   * success, on a network throw, or on a timeout.
+   */
+  status?: number | null
+  /**
+   * Human-readable failure reason surfaced to the UI: `HTTP <status>` (bad URL
+   * or upstream error), `timeout` (per-feed budget exceeded), or `network`
+   * (the request threw). `null` on success.
+   */
+  reason?: string | null
 }
 
 /**
@@ -224,16 +252,18 @@ export async function fetchFeedWithStatus(
     const response = await transport(url, signal)
     if (!response.ok) {
       console.error(`RSS feed returned HTTP ${response.status}: ${url}`)
-      return { items: [], ok: false }
+      return { items: [], ok: false, status: response.status, reason: `HTTP ${response.status}` }
     }
     const text = await response.text()
-    return { items: parseRSS(text, source), ok: true }
+    return { items: parseRSS(text, source), ok: true, status: response.status, reason: null }
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      return { items: [], ok: false }
+      // A per-feed timeout surfaces as a distinct reason so the UI can tell
+      // "hung" apart from "upstream returned 503".
+      return { items: [], ok: false, status: null, reason: 'timeout' }
     }
     console.error(`Failed to fetch RSS feed: ${url}`, error)
-    return { items: [], ok: false }
+    return { items: [], ok: false, status: null, reason: 'network' }
   }
 }
 
@@ -321,6 +351,7 @@ export async function fetchAllFeeds(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_FEED_TIMEOUT_MS
   const transport = opts.transport ?? defaultFeedTransport
   const enabledFeeds = feeds.filter((f) => f.enabled)
+  const fetchedAt = new Date().toISOString()
   const results = await Promise.all(
     enabledFeeds.map((feed) => fetchFeedWithTimeout(feed, timeoutMs, transport)),
   )
@@ -336,7 +367,20 @@ export async function fetchAllFeeds(
     return []
   })
 
-  return { items, succeeded, failed }
+  const feedStatuses: FeedStatus[] = enabledFeeds.map((feed, i) => {
+    const r = results[i]
+    return {
+      name: feed.name,
+      url: feed.url,
+      ok: r.ok,
+      status: r.status ?? null,
+      reason: r.reason ?? (r.ok ? null : 'unknown'),
+      itemCount: r.items.length,
+      fetchedAt,
+    }
+  })
+
+  return { items, succeeded, failed, feedStatuses }
 }
 
 /**
