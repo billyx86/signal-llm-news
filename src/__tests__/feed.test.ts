@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { useFeedStore, mergeStories, REFRESH_INTERVAL_MS } from '@/lib/feed'
+import {
+  useFeedStore,
+  mergeStories,
+  classifyFeedHealth,
+  REFRESH_INTERVAL_MS,
+} from '@/lib/feed'
+import type { FeedStatus } from '@/lib/rss'
 import { stories, type Story } from '@/data/news'
 
 function makeStory(overrides: Partial<Story> & { id: string }): Story {
@@ -22,6 +28,7 @@ beforeEach(() => {
     liveStories: [],
     failedFeeds: 0,
     succeededFeeds: 0,
+    feedStatuses: [],
     lastRefreshedAt: null,
     isRefreshing: false,
     hasRefreshed: false,
@@ -94,7 +101,43 @@ describe('useFeedStore.refresh', () => {
     expect(state.liveStories[0].id).toBe('rss:https://openai.com/live')
     expect(state.succeededFeeds).toBe(1)
     expect(state.failedFeeds).toBeGreaterThanOrEqual(1)
+    expect(state.feedStatuses).toHaveLength(4)
+    const openai = state.feedStatuses.find((s) => s.name === 'OpenAI Blog')
+    expect(openai).toMatchObject({ ok: true, itemCount: 1, reason: null })
+    expect(state.feedStatuses.find((s) => s.name === 'Anthropic Blog')?.ok).toBe(false)
     expect(state.lastRefreshedAt).toBeTruthy()
+  })
+
+  it('threads per-feed status (name, ok, reason, status) into feedStatuses', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('openai')) {
+          return new Response('<rss version="2.0"><channel></channel></rss>', { status: 200 })
+        }
+        if (String(url).includes('anthropic')) {
+          return new Response('nope', { status: 404 })
+        }
+        if (String(url).includes('huggingface')) {
+          return new Response('upstream down', { status: 503 })
+        }
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+
+    await useFeedStore.getState().refresh()
+
+    const byName = Object.fromEntries(
+      useFeedStore.getState().feedStatuses.map((s) => [s.name, s]),
+    )
+    expect(byName['OpenAI Blog']).toMatchObject({ ok: true, status: 200, reason: null })
+    expect(byName['Anthropic Blog']).toMatchObject({ ok: false, status: 404, reason: 'HTTP 404' })
+    expect(byName['Hugging Face Blog']).toMatchObject({
+      ok: false,
+      status: 503,
+      reason: 'HTTP 503',
+    })
+    expect(byName['DeepMind Blog']).toMatchObject({ ok: false, status: null, reason: 'network' })
   })
 
   it('never stacks concurrent refreshes', async () => {
@@ -132,5 +175,44 @@ describe('useFeedStore.refresh', () => {
 
   it('exposes a 5-minute polling interval constant', () => {
     expect(REFRESH_INTERVAL_MS).toBe(5 * 60 * 1000)
+  })
+})
+
+describe('classifyFeedHealth', () => {
+  const now = Date.parse('2026-10-22T03:00:00.000Z')
+  const status = (over: Partial<FeedStatus>): FeedStatus => ({
+    name: 'Feed',
+    url: 'https://example.com/rss',
+    ok: true,
+    status: 200,
+    reason: null,
+    itemCount: 3,
+    fetchedAt: new Date(now).toISOString(),
+    ...over,
+  })
+
+  it('classifies a recent successful fetch as ok', () => {
+    expect(classifyFeedHealth(status({ fetchedAt: new Date(now - 60_000).toISOString() }), now)).toBe('ok')
+  })
+
+  it('classifies any errored fetch as failed regardless of age', () => {
+    expect(classifyFeedHealth(status({ ok: false, reason: 'HTTP 404', status: 404 }), now)).toBe('failed')
+    expect(classifyFeedHealth(status({ ok: false, reason: 'timeout' }), now)).toBe('failed')
+    expect(classifyFeedHealth(status({ ok: false, reason: 'network', status: null }), now)).toBe('failed')
+  })
+
+  it('classifies an old but successful fetch as stale', () => {
+    const stale = status({ fetchedAt: new Date(now - 2 * REFRESH_INTERVAL_MS - 1).toISOString() })
+    expect(classifyFeedHealth(stale, now)).toBe('stale')
+  })
+
+  it('keeps a successful fetch within the stale window as ok', () => {
+    const fresh = status({ fetchedAt: new Date(now - 2 * REFRESH_INTERVAL_MS + 1000).toISOString() })
+    expect(classifyFeedHealth(fresh, now)).toBe('ok')
+  })
+
+  it('lets callers override the stale window', () => {
+    const stale = status({ fetchedAt: new Date(now - 60_000).toISOString() })
+    expect(classifyFeedHealth(stale, now, 30_000)).toBe('stale')
   })
 })
