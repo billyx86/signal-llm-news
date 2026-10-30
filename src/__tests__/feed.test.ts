@@ -3,9 +3,13 @@ import {
   useFeedStore,
   mergeStories,
   classifyFeedHealth,
+  getActiveFeeds,
+  feedCategoryByName,
   REFRESH_INTERVAL_MS,
 } from '@/lib/feed'
 import type { FeedStatus } from '@/lib/rss'
+import { RSS_FEEDS } from '@/lib/rss'
+import { useUserFeedStore } from '@/lib/feed-store'
 import { stories, type Story } from '@/data/news'
 
 function makeStory(overrides: Partial<Story> & { id: string }): Story {
@@ -33,6 +37,10 @@ beforeEach(() => {
     isRefreshing: false,
     hasRefreshed: false,
   })
+  // Start each test with no user-added feeds so the built-in-only assertions
+  // below are deterministic, and so a feed added in one test cannot leak into
+  // the next.
+  useUserFeedStore.setState({ userFeeds: [] })
 })
 
 afterEach(() => {
@@ -175,6 +183,177 @@ describe('useFeedStore.refresh', () => {
 
   it('exposes a 5-minute polling interval constant', () => {
     expect(REFRESH_INTERVAL_MS).toBe(5 * 60 * 1000)
+  })
+})
+
+describe('getActiveFeeds', () => {
+  it('returns only the built-in feeds when the user list is empty', () => {
+    expect(getActiveFeeds([])).toEqual(RSS_FEEDS)
+  })
+
+  it('appends enabled user feeds to the built-in list', () => {
+    const userFeeds = [
+      { name: 'My Feed', url: 'https://myblog.example/rss.xml', enabled: true },
+    ]
+    const active = getActiveFeeds(userFeeds)
+    expect(active).toHaveLength(RSS_FEEDS.length + 1)
+    expect(active[active.length - 1]).toMatchObject({
+      name: 'My Feed',
+      url: 'https://myblog.example/rss.xml',
+    })
+  })
+
+  it('excludes disabled user feeds', () => {
+    const userFeeds = [
+      { name: 'Off', url: 'https://off.example/rss.xml', enabled: false },
+      { name: 'On', url: 'https://on.example/rss.xml', enabled: true },
+    ]
+    const active = getActiveFeeds(userFeeds)
+    expect(active).toHaveLength(RSS_FEEDS.length + 1)
+    expect(active.map((f) => f.name)).not.toContain('Off')
+    expect(active.map((f) => f.name)).toContain('On')
+  })
+
+  it('dedupes a user feed that matches a built-in feed URL', () => {
+    const builtInUrl = RSS_FEEDS[0].url
+    const userFeeds = [
+      { name: 'Duplicate', url: builtInUrl, enabled: true },
+    ]
+    // Normalisation must treat the same URL (even with a trailing slash) as a
+    // duplicate so we do not fetch the built-in feed twice.
+    const active = getActiveFeeds(userFeeds)
+    expect(active).toHaveLength(RSS_FEEDS.length)
+  })
+
+  it('dedupes a user feed that differs only by trailing slash / host case', () => {
+    const builtIn = RSS_FEEDS[0]
+    const url = new URL(builtIn.url)
+    url.hostname = url.hostname.toUpperCase()
+    url.pathname = url.pathname.replace(/\/$/, '') + '/'
+    const userFeeds = [{ name: 'Case Dup', url: url.toString(), enabled: true }]
+    expect(getActiveFeeds(userFeeds)).toHaveLength(RSS_FEEDS.length)
+  })
+})
+
+describe('feedCategoryByName', () => {
+  it('maps built-in feed names to their categories', () => {
+    const map = feedCategoryByName()
+    for (const feed of RSS_FEEDS) {
+      expect(map.get(feed.name)).toBe(feed.category)
+    }
+  })
+
+  it('includes user feed categories in the map', () => {
+    const userFeeds = [
+      { name: 'Research Feed', url: 'https://research.example/rss.xml', enabled: true, category: 'Research' },
+    ]
+    const map = feedCategoryByName(getActiveFeeds(userFeeds))
+    expect(map.get('Research Feed')).toBe('Research')
+  })
+})
+
+describe('useFeedStore.refresh — user feeds (issue #16)', () => {
+  const USER_FEED_URL = 'https://myblog.example/rss.xml'
+
+  it('fetches a user-added feed and surfaces its items under the right topic', async () => {
+    useUserFeedStore
+      .getState()
+      .addFeed({ url: USER_FEED_URL, name: 'My Blog', category: 'Research' })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('openai')) {
+          return new Response(
+            `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>OpenAI item</title>
+    <link>https://openai.com/live</link>
+    <description>OpenAI news.</description>
+    <pubDate>Wed, 27 Aug 2026 01:00:00 GMT</pubDate>
+  </item>
+</channel></rss>`,
+            { status: 200 },
+          )
+        }
+        if (String(url).includes('myblog.example')) {
+          return new Response(
+            `<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>User feed item</title>
+    <link>https://myblog.example/post</link>
+    <description>A post from the user's own blog.</description>
+    <pubDate>Wed, 27 Aug 2026 02:00:00 GMT</pubDate>
+  </item>
+</channel></rss>`,
+            { status: 200 },
+          )
+        }
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+
+    await useFeedStore.getState().refresh()
+
+    const state = useFeedStore.getState()
+    // 4 built-in + 1 user feed.
+    expect(state.feedStatuses).toHaveLength(RSS_FEEDS.length + 1)
+    expect(state.succeededFeeds).toBe(2)
+
+    const userStatus = state.feedStatuses.find((s) => s.name === 'My Blog')
+    expect(userStatus).toMatchObject({ ok: true, itemCount: 1, reason: null })
+
+    const userStory = state.liveStories.find((s) => s.source === 'My Blog')
+    expect(userStory).toBeDefined()
+    expect(userStory?.title).toBe('User feed item')
+    // The user feed's category maps to the Research topic.
+    expect(userStory?.topic).toBe('Research')
+  })
+
+  it('does not fetch a user feed the user has disabled', async () => {
+    const res = useUserFeedStore
+      .getState()
+      .addFeed({ url: USER_FEED_URL, name: 'My Blog' })
+    if (!res.ok) throw new Error(res.reason)
+    useUserFeedStore.getState().toggleFeed(USER_FEED_URL)
+
+    const fetchMock = vi.fn(async (_url: string) => {
+      throw new TypeError('Failed to fetch')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await useFeedStore.getState().refresh()
+
+    // No request should have gone out for the disabled user feed.
+    const calledForUserFeed = fetchMock.mock.calls.some(([u]) =>
+      String(u).includes('myblog.example'),
+    )
+    expect(calledForUserFeed).toBe(false)
+    expect(useFeedStore.getState().feedStatuses).toHaveLength(RSS_FEEDS.length)
+  })
+
+  it('drops a user feed from the next refresh after it is removed', async () => {
+    const res = useUserFeedStore
+      .getState()
+      .addFeed({ url: USER_FEED_URL, name: 'My Blog' })
+    if (!res.ok) throw new Error(res.reason)
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('myblog.example')) {
+        return new Response('<rss version="2.0"><channel></channel></rss>', { status: 200 })
+      }
+      throw new TypeError('Failed to fetch')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await useFeedStore.getState().refresh()
+    expect(useFeedStore.getState().feedStatuses).toHaveLength(RSS_FEEDS.length + 1)
+
+    useUserFeedStore.getState().removeFeed(USER_FEED_URL)
+    await useFeedStore.getState().refresh()
+    expect(useFeedStore.getState().feedStatuses).toHaveLength(RSS_FEEDS.length)
   })
 })
 

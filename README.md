@@ -8,6 +8,7 @@
 - **Accessibility**: Skip links, ARIA labels, improved focus management
 - **Cross-Tab Sync**: Bookmarks sync across browser tabs
 - **RSS Feeds**: Automated ingestion from AI news sources
+- **User-managed feeds**: add, toggle, rename, and remove your own RSS/Atom feeds (gear button in the header)
 - **Type Safety**: Improved TypeScript types and readonly data structures
 - **Tests**: Vitest setup with coverage for news utilities
 - **Documentation**: Contributing guide and code style documentation
@@ -76,8 +77,9 @@ A full API reference with copy-paste examples is in [`docs/rss-api.md`](docs/rss
    that connects but never responds is dropped as a failure instead of stalling
    the whole refresh. In the browser, fetches are routed through a
    **server-side proxy** (`src/lib/feed-proxy.ts` → `feed-proxy.server.ts`) so
-   feeds without permissive CORS headers still load; the proxy only ever fetches
-   URLs in the `RSS_FEEDS` allowlist (see the note below). Outside a browser
+   feeds without permissive CORS headers still load; the proxy accepts built-in
+   `RSS_FEEDS` URLs plus any user feed URL that passes the SSRF-safe guard
+   (see the note below). Outside a browser
    (SSR, unit tests) it falls back to a direct `fetch`.
 3. **Parse** — each feed is normalised to `RSSItem[]`, handling RSS 2.0
    `<item>` and Atom `<entry>`, `<![CDATA[…]]>` sections, and HTML entities.
@@ -178,11 +180,51 @@ The module is built so that **a single bad feed can never break the digest**:
 > through a server function (`src/lib/feed-proxy.ts`) that fetches upstream on
 > the server and returns the raw XML, so feeds without permissive CORS headers
 > still load instead of silently failing. Because a `?url=` proxy is otherwise an
-> SSRF vector, the handler **only** fetches URLs already present in
-> `RSS_FEEDS`; any other URL is rejected with `403` before a request is made.
+> SSRF vector, two gates apply (see `src/lib/feed-url-guard.ts`):
+> 1. a URL that exactly matches a built-in `RSS_FEEDS` entry is trusted as-is;
+> 2. any other URL (a user-added feed) is accepted only if it passes the
+>    SSRF-safe guard — `http:`/`https:` with a public host (no loopback,
+>    private, link-local, CGNAT, or reserved range, no `localhost`).
+>
+> Everything else is rejected with `403` before any network call is made, and
+> the proxy fetches the guard's *normalised* URL, never the raw user input.
 > The proxy also keeps a short-TTL in-process cache per feed (120 s, see
 > `FEED_CACHE_TTL_MS` in `feed-proxy.server.ts`) and revalidates expired
 > entries with `If-None-Match` / `If-Modified-Since`, so multiple tabs or
-> users polling the same feed do not each hit the upstream publisher.
+> users polling the same feed do not each hit the upstream publisher. Since
+> user feeds make the set of fetchable URLs unbounded, the cache is now capped
+> at `MAX_FEED_CACHE_ENTRIES` (200) with LRU eviction.
 > Outside a browser (SSR / unit tests) the pipeline uses a direct `fetch`.
+
+### User-managed feeds (issue #16)
+
+The gear button in the header opens the **feed settings panel**
+(`src/components/FeedSettings.tsx`). Users can:
+
+- **Add** a feed by URL (plus an optional name and category). The URL is
+  validated inline by `validateFeedUrl` — rejections (bad scheme, private /
+  loopback host, malformed URL, duplicate) are shown verbatim in the panel.
+- **Toggle** a feed on/off, **rename** it, or **remove** it.
+
+State lives in the persisted zustand store `useUserFeedStore`
+(`src/lib/feed-store.ts`, storage key `signal-user-feeds`), so feeds survive
+reloads. `UserFeed` reuses the `RSSFeedConfig` shape, and `getActiveFeeds()`
+in `src/lib/feed.ts` merges the built-in `RSS_FEEDS` with enabled user feeds —
+de-duplicated by normalised URL, so adding a feed that already ships with the
+app does not poll it twice. Changes take effect on the next 5-minute refresh
+(or the next manual Sync) without a reload.
+
+| Export (`src/lib/feed-store.ts`) | Purpose |
+| -------------------------------- | ------- |
+| `useUserFeedStore`               | Persisted zustand store: `userFeeds`, `addFeed`, `removeFeed`, `toggleFeed`, `renameFeed`, `clearUserFeeds`, `hasFeed`. |
+| `addFeed({ url, name?, category? })` | Validates via the guard, derives a name from the URL when omitted, rejects duplicates. Returns `{ ok, feed } \| { ok: false, reason }`. |
+| `normalizeFeedKey(url)`          | Canonical URL key used for dedupe (lowercase host, default port and trailing slash dropped). |
+| `nameFromFeedUrl(url)`           | Derives a display name from the host when the user gives none. |
+| `validateFeedUrl(raw)` (`src/lib/feed-url-guard.ts`) | SSRF-safe validation: `http(s)` + public host only. Pure and synchronous; shared by the proxy and the settings panel. |
+| `getActiveFeeds(userFeeds?)` (`src/lib/feed.ts`) | Built-in `RSS_FEEDS` + enabled, de-duplicated user feeds — what the pipeline fetches. |
+
+> ⚠️ **Known limitation (by design)** — a public *DNS hostname* is accepted
+> because the guard is pure and synchronous and cannot resolve DNS. DNS
+> rebinding of a public name to a private IP is out of scope; the literal-IP
+> and `localhost` rejection covers the SSRF vectors that matter here.
 

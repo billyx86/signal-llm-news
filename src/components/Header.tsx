@@ -3,6 +3,7 @@ import { Bookmark, Radio, RefreshCw } from 'lucide-react'
 import { useBookmarkStore } from '@/lib/store'
 import { useFeedStore } from '@/lib/feed'
 import { relativeTime } from '@/lib/time'
+import { FeedSettings } from '@/components/FeedSettings'
 
 export function Header() {
   const count = useBookmarkStore((s) => s.bookmarks.length)
@@ -62,6 +63,7 @@ export function Header() {
               />
             </span>
           </button>
+          <FeedSettings />
           <Link
             to="/"
             className="hidden px-2 py-1.5 text-xs font-medium uppercase tracking-wider text-ink-400 transition hover:text-ink-100 sm:inline"

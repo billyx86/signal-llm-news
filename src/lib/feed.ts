@@ -6,11 +6,14 @@ import {
   type FeedResult,
   type FeedStatus,
   type RSSItem,
+  type RSSFeedConfig,
   type FeedTransport,
   type FeedTransportResponse,
 } from '@/lib/rss'
 import type { Story, Topic } from '@/data/news'
 import { categoryToTopic } from '@/lib/rss'
+import { useUserFeedStore, type UserFeed } from '@/lib/feed-store'
+import { normalizeFeedKey } from '@/lib/feed-store'
 
 /** How often the feed auto-refreshes while the tab is visible. */
 export const REFRESH_INTERVAL_MS = 5 * 60 * 1000
@@ -96,7 +99,34 @@ function toStory(item: RSSItem, feedCategory?: string): Story {
   }
 }
 
-const feedCategoryBySource = new Map(RSS_FEEDS.map((f) => [f.name, f.category]))
+/**
+ * The feeds the pipeline should fetch on the next refresh: the built-in
+ * `RSS_FEEDS` plus any user-added feeds that are still enabled (issue #16).
+ *
+ * User feeds are read from the persisted store at call time, so adding or
+ * removing a feed takes effect on the *next* refresh without a reload. The
+ * user list is de-duplicated against the built-in list by normalised URL, in
+ * case the user adds a feed that already ships with the app.
+ */
+export function getActiveFeeds(userFeeds: readonly UserFeed[] = []): RSSFeedConfig[] {
+  const builtInKeys = new Set(RSS_FEEDS.map((f) => normalizeFeedKey(f.url)))
+  const user = userFeeds.filter(
+    (f) => f.enabled && !builtInKeys.has(normalizeFeedKey(f.url)),
+  )
+  return [...RSS_FEEDS, ...user]
+}
+
+/**
+ * Map a feed's source name to its editorial category, for the feeds that will
+ * actually be fetched. Built from the *active* feed list each call so user
+ * feeds (which may carry a category) are classified the same way as built-in
+ * ones.
+ */
+export function feedCategoryByName(
+  feeds: readonly RSSFeedConfig[] = getActiveFeeds(),
+): Map<string, string | undefined> {
+  return new Map(feeds.map((f) => [f.name, f.category]))
+}
 
 export const useFeedStore = create<FeedState>()((set, get) => ({
   liveStories: [],
@@ -116,10 +146,18 @@ export const useFeedStore = create<FeedState>()((set, get) => ({
       // browser CORS); elsewhere it is undefined and fetchAllFeeds falls back
       // to a direct fetch.
       const transport = await resolveFeedTransport()
-      const result: FeedResult = await fetchAllFeeds(RSS_FEEDS, transport ? { transport } : {})
+
+      // Built-in feeds plus any enabled user-added feeds (issue #16). Read at
+      // call time so add/remove takes effect on the next refresh.
+      const activeFeeds = getActiveFeeds(useUserFeedStore.getState().userFeeds)
+      const categoryByName = feedCategoryByName(activeFeeds)
+      const result: FeedResult = await fetchAllFeeds(
+        activeFeeds,
+        transport ? { transport } : {},
+      )
       const now = new Date().toISOString()
       const liveStories = result.items
-        .map((item) => toStory(item, feedCategoryBySource.get(item.source)))
+        .map((item) => toStory(item, categoryByName.get(item.source)))
         .sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1))
       set({
         liveStories,
