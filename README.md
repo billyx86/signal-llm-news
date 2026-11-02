@@ -6,7 +6,8 @@
 
 - **Keyboard Navigation**: `j/k` to navigate stories, `/` to focus search
 - **Accessibility**: Skip links, ARIA labels, improved focus management
-- **Cross-Tab Sync**: Bookmarks sync across browser tabs
+- **Cross-Tab Sync**: Bookmarks and user-managed feeds sync across browser tabs
+- **Per-Feed Status**: Each feed in the settings panel shows a live ok / error / off chip
 - **RSS Feeds**: Automated ingestion from AI news sources
 - **User-managed feeds**: add, toggle, rename, and remove your own RSS/Atom feeds (gear button in the header)
 - **Type Safety**: Improved TypeScript types and readonly data structures
@@ -227,4 +228,45 @@ app does not poll it twice. Changes take effect on the next 5-minute refresh
 > because the guard is pure and synchronous and cannot resolve DNS. DNS
 > rebinding of a public name to a private IP is out of scope; the literal-IP
 > and `localhost` rejection covers the SSRF vectors that matter here.
+
+### Cross-tab sync (issue #22)
+
+Both persisted stores — bookmarks (`signal-bookmarks`, `src/lib/store.ts`) and
+user feeds (`signal-user-feeds`, `src/lib/feed-store.ts`) — rehydrate their tab
+when **another** tab writes to the same `localStorage` key. A feed added in
+tab A is polled by tab B on its next refresh without a reload; removing or
+disabling a feed in A stops B from fetching it. Bookmarks behave the same way.
+
+The `storage` event fires only in *other* open documents (never in the tab
+that made the write), so each listener simply applies `e.newValue` to its own
+store. The listener is attached at **module scope** with an idempotency guard,
+not inside `onRehydrateStorage` — zustand's `persist` invokes whatever that
+option *returns* as a post-rehydration callback, so returning a cleanup
+function there removed the listener the moment it was added (this was the
+original bug: neither store ever actually synced). Unit tests in
+`src/__tests__/feed-store-crosstab.test.ts` simulate two tabs with independent
+store instances bridged by a dispatched `StorageEvent`, covering add / remove /
+disable, plus ignoring writes for other keys and malformed payloads.
+
+### Per-feed status chip (issue #23)
+
+Every feed row in the settings panel carries a small state chip
+(`src/components/FeedStatusChip.tsx`):
+
+- **ok** (green) — the last refresh for the feed succeeded. The tooltip shows
+  the item count and when it was fetched, prefixed with `stale ·` when the
+  result is older than the staleness threshold.
+- **error** (amber) — the last refresh failed; the chip label is the failure
+  reason itself (`HTTP 404`, `timeout`, `network`, …) with details and the
+  timestamp in the tooltip.
+- **off** (grey) — the feed is toggled disabled; its last status is irrelevant.
+
+The state is derived by the pure `feedChipState(feed, status, now?)` helper
+from `feed.enabled` plus the most recent `FeedStatus` recorded by the refresh
+pipeline (one per active feed, user feeds included — matched by normalised
+URL), so no extra fetches are needed. Because it is derived, disabling then
+re-enabling a feed resets it automatically: it shows `off` while disabled and
+falls back to the last known ok/error the moment it is switched back on.
+`FeedStatusChip` renders `data-testid="feed-status-chip"` and
+`data-chip-state={state}` for the test suite.
 

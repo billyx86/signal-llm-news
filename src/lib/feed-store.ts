@@ -5,6 +5,12 @@ import { validateFeedUrl } from '@/lib/feed-url-guard'
 
 const STORAGE_KEY = 'signal-user-feeds'
 
+/** Shape of the persisted localStorage envelope (see zustand `persist`). */
+type PersistedUserFeeds = {
+  state: { userFeeds: UserFeed[] }
+  version: number
+}
+
 /**
  * A feed the user adds themselves (issue #16). Same shape as the built-in
  * {@link RSSFeedConfig}, so the refresh pipeline can treat user and built-in
@@ -142,25 +148,47 @@ export const useUserFeedStore = create<UserFeedState>()(
         return get().userFeeds.some((f) => normalizeFeedKey(f.url) === key)
       },
     }),
-    {
-      name: STORAGE_KEY,
-      version: 1,
-      onRehydrateStorage: () => {
-        if (typeof window !== 'undefined') {
-          const handleStorageChange = (e: StorageEvent) => {
-            if (e.key === STORAGE_KEY && e.newValue) {
-              try {
-                const parsed = JSON.parse(e.newValue)
-                if (parsed.state && Array.isArray(parsed.state.userFeeds)) {
-                  useUserFeedStore.setState({ userFeeds: parsed.state.userFeeds })
-                }
-              } catch {}
-            }
-          }
-          window.addEventListener('storage', handleStorageChange)
-          return () => window.removeEventListener('storage', handleStorageChange)
-        }
-      },
-    },
+    { name: STORAGE_KEY, version: 1 },
   ),
 )
+
+/**
+ * Rehydrate this tab's store when *another* tab writes to the same
+ * localStorage key (issue #22).
+ *
+ * The `storage` event fires in every *other* open document — never in the tab
+ * that made the write — so applying `e.newValue` here is what keeps several
+ * tabs in agreement: a feed added in tab A is polled by tab B on its next
+ * refresh without a reload, and removing/disabling a feed in A stops B from
+ * fetching it.
+ *
+ * The listener is attached at **module scope**, not inside
+ * `onRehydrateStorage`: zustand's `persist` invokes whatever that option
+ * *returns* as a post-rehydration callback, so returning a cleanup function
+ * there removed the listener immediately after it was added (verified
+ * empirically — the listener never survived, and no cross-tab sync ever
+ * happened). Registering here keeps it alive for the tab's lifetime. The
+ * boolean guard makes re-importing the module (vitest isolates modules per
+ * test file, and HMR re-runs module bodies) idempotent.
+ */
+let crossTabSyncAttached = false
+
+function attachCrossTabSync(): void {
+  if (crossTabSyncAttached) return
+  if (typeof window === 'undefined') return
+  crossTabSyncAttached = true
+
+  window.addEventListener('storage', (e: StorageEvent) => {
+    if (e.key !== STORAGE_KEY || e.newValue === null) return
+    try {
+      const parsed = JSON.parse(e.newValue) as PersistedUserFeeds
+      if (parsed && parsed.state && Array.isArray(parsed.state.userFeeds)) {
+        useUserFeedStore.setState({ userFeeds: parsed.state.userFeeds })
+      }
+    } catch {
+      // Ignore a malformed write from another tab.
+    }
+  })
+}
+
+attachCrossTabSync()

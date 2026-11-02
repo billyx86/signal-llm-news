@@ -3,8 +3,11 @@ import { Plus, Radio, Settings2, Trash2 } from 'lucide-react'
 import { TOPICS } from '@/data/news'
 import {
   useUserFeedStore,
+  normalizeFeedKey,
   type UserFeed,
 } from '@/lib/feed-store'
+import { useFeedStore } from '@/lib/feed'
+import { FeedStatusChip } from './FeedStatusChip'
 
 /**
  * User-managed feed settings (issue #16).
@@ -36,6 +39,10 @@ export function FeedSettings() {
   const removeFeed = useUserFeedStore((s) => s.removeFeed)
   const toggleFeed = useUserFeedStore((s) => s.toggleFeed)
   const renameFeed = useUserFeedStore((s) => s.renameFeed)
+  // Per-feed status from the last refresh (issue #23). The pipeline already
+  // records one `FeedStatus` per active feed (including user feeds, merged in
+  // by `getActiveFeeds`); we just surface it here — no extra fetches.
+  const feedStatuses = useFeedStore((s) => s.feedStatuses)
 
   // Close on Escape and on a click outside the panel.
   useEffect(() => {
@@ -57,6 +64,14 @@ export function FeedSettings() {
   }, [open])
 
   const enabledCount = userFeeds.filter((f) => f.enabled).length
+
+  // Map a feed's normalised URL to its last-refresh status, so the chip can be
+  // looked up per row. `getActiveFeeds` de-dupes built-ins and user feeds by
+  // the same normalised key, so this matches exactly what the pipeline fetches.
+  const statusByKey = new Map(
+    feedStatuses.map((s) => [normalizeFeedKey(s.url), s]),
+  )
+  const statusFor = (feed: UserFeed) => statusByKey.get(normalizeFeedKey(feed.url))
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault()
@@ -266,6 +281,7 @@ export function FeedSettings() {
                         </>
                       )}
                     </div>
+                    <FeedStatusChip feed={feed} status={statusFor(feed)} />
                     {renaming !== feed.url && (
                       <>
                         <button
