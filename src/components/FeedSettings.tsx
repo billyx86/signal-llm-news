@@ -43,6 +43,9 @@ export function FeedSettings() {
   // records one `FeedStatus` per active feed (including user feeds, merged in
   // by `getActiveFeeds`); we just surface it here — no extra fetches.
   const feedStatuses = useFeedStore((s) => s.feedStatuses)
+  // Per-feed retry backoff state (issue #25), so a suspended feed's chip can
+  // tell the user how long until its next attempt.
+  const backoff = useFeedStore((s) => s.backoff)
 
   // Close on Escape and on a click outside the panel.
   useEffect(() => {
@@ -72,6 +75,9 @@ export function FeedSettings() {
     feedStatuses.map((s) => [normalizeFeedKey(s.url), s]),
   )
   const statusFor = (feed: UserFeed) => statusByKey.get(normalizeFeedKey(feed.url))
+  // Same normalised-URL lookup for the feed's retry backoff state, so a
+  // suspended feed's chip can say "retrying in Xm" (issue #25).
+  const backoffFor = (feed: UserFeed) => backoff.get(normalizeFeedKey(feed.url))
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault()
@@ -281,7 +287,11 @@ export function FeedSettings() {
                         </>
                       )}
                     </div>
-                    <FeedStatusChip feed={feed} status={statusFor(feed)} />
+                    <FeedStatusChip
+                      feed={feed}
+                      status={statusFor(feed)}
+                      backoff={backoffFor(feed)}
+                    />
                     {renaming !== feed.url && (
                       <>
                         <button
