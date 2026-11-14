@@ -4,6 +4,7 @@ import { render, screen } from '@testing-library/react'
 import { FeedStatusChip, feedChipState } from '@/components/FeedStatusChip'
 import type { UserFeed } from '@/lib/feed-store'
 import type { FeedStatus } from '@/lib/rss'
+import type { FeedBackoffState } from '@/lib/feed'
 
 const now = 1_700_000_000_000
 const recent = new Date(now - 60_000).toISOString()
@@ -23,6 +24,11 @@ function status(over: Partial<FeedStatus>): FeedStatus {
     fetchedAt: recent,
     ...over,
   }
+}
+
+/** A feed suspended by retry backoff: 2 consecutive failures, last tried 1m ago. */
+function backoff(over: Partial<FeedBackoffState> = {}): FeedBackoffState {
+  return { consecutiveFailures: 2, lastAttemptAt: recent, ...over }
 }
 
 describe('feedChipState (pure helper)', () => {
@@ -67,6 +73,40 @@ describe('feedChipState (pure helper)', () => {
     const info = feedChipState(userFeed({ url: 'https://a.com/x' }), undefined, now)
     expect(info.state).toBe('healthy')
     expect(info.label).toBe('ok')
+  })
+
+  it('adds "retrying in Xm" to the tooltip when the failed feed is suspended by backoff (issue #25)', () => {
+    // 2 consecutive failures, last tried 1m ago → next attempt in ~44m.
+    const info = feedChipState(
+      userFeed({ url: 'https://a.com/x' }),
+      status({ ok: false, status: 404, reason: 'HTTP 404' }),
+      now,
+      backoff(),
+    )
+    expect(info.state).toBe('error')
+    expect(info.title).toContain('retrying in 44m')
+  })
+
+  it('omits the retry hint once the backoff window has elapsed (issue #25)', () => {
+    // Last tried long enough ago that the 45m window is over → due again.
+    const info = feedChipState(
+      userFeed({ url: 'https://a.com/x' }),
+      status({ ok: false, status: 404, reason: 'HTTP 404' }),
+      now,
+      backoff({ lastAttemptAt: new Date(now - 2 * 60 * 60_000).toISOString() }),
+    )
+    expect(info.state).toBe('error')
+    expect(info.title).not.toContain('retrying in')
+  })
+
+  it('omits the retry hint when no backoff state is provided (issue #25)', () => {
+    const info = feedChipState(
+      userFeed({ url: 'https://a.com/x' }),
+      status({ ok: false, status: 404, reason: 'HTTP 404' }),
+      now,
+    )
+    expect(info.state).toBe('error')
+    expect(info.title).not.toContain('retrying in')
   })
 })
 
@@ -132,5 +172,20 @@ describe('FeedStatusChip (component)', () => {
     )
     expect(screen.getByTestId('feed-status-chip').getAttribute('data-chip-state')).toBe('error')
     expect(screen.getByText('HTTP 404')).toBeTruthy()
+  })
+
+  it('exposes the retry hint in the title tooltip for a suspended failed feed (issue #25)', () => {
+    render(
+      <FeedStatusChip
+        feed={userFeed({ url: 'https://a.com/x' })}
+        status={status({ ok: false, status: 404, reason: 'HTTP 404' })}
+        now={now}
+        backoff={backoff()}
+      />,
+    )
+    expect(screen.getByTestId('feed-status-chip')).toHaveAttribute(
+      'title',
+      expect.stringContaining('retrying in 44m'),
+    )
   })
 })

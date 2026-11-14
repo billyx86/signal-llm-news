@@ -1,6 +1,11 @@
 import type { UserFeed } from '@/lib/feed-store'
 import type { FeedStatus } from '@/lib/rss'
-import { classifyFeedHealth } from '@/lib/feed'
+import {
+  classifyFeedHealth,
+  formatBackoffInterval,
+  nextAttemptAt,
+  type FeedBackoffState,
+} from '@/lib/feed'
 import { relativeTime } from '@/lib/time'
 
 /** The three states the settings-panel chip can be in (issue #23). */
@@ -22,7 +27,10 @@ export type FeedChipInfo = {
  *
  * - `disabled` — the feed is toggled off; its last status is irrelevant.
  * - `error`    — the last refresh for this feed failed; the label carries the
- *   reason (HTTP status / timeout / network).
+ *   reason (HTTP status / timeout / network). When a backoff state is known
+ *   and the feed's next attempt is in the future, the tooltip adds
+ *   "retrying in Xm" so the user sees how long until the next attempt
+ *   (issue #25).
  * - `healthy`  — the last refresh succeeded (or no refresh has run yet this
  *   session); a neutral chip.
  *
@@ -30,21 +38,27 @@ export type FeedChipInfo = {
  * disabling then re-enabling a feed "resets" automatically: it shows `off`
  * while disabled and falls back to the last known `healthy`/`error` the moment
  * it is switched back on — no manual reset and no new fetch required.
+ *
+ * `backoff` is optional so the chip keeps working where no backoff state is
+ * available (e.g. the built-in feeds' rows render their own status elsewhere).
  */
 export function feedChipState(
   feed: { enabled: boolean; name: string },
   status: FeedStatus | undefined,
   now = Date.now(),
+  backoff?: FeedBackoffState,
 ): FeedChipInfo {
   if (!feed.enabled) {
     return { state: 'disabled', label: 'off', title: `${feed.name} — disabled` }
   }
   if (status && !status.ok) {
     const reason = status.reason ?? 'unknown error'
+    const retryHint = backoff ? retryHintFor(backoff, now) : null
+    const retrySuffix = retryHint ? ` · retrying in ${retryHint}` : ''
     return {
       state: 'error',
       label: reason,
-      title: `${feed.name} — last refresh failed (${reason}) · ${relativeTime(status.fetchedAt, now)}`,
+      title: `${feed.name} — last refresh failed (${reason}) · ${relativeTime(status.fetchedAt, now)}${retrySuffix}`,
     }
   }
   if (status && status.ok) {
@@ -63,17 +77,31 @@ export function feedChipState(
 }
 
 /**
+ * "in 45m" for a feed suspended until a future attempt; `null` when the feed
+ * is not suspended (it has no backoff state, or its next attempt is due now).
+ * Pure (issue #25).
+ */
+function retryHintFor(backoff: FeedBackoffState, now: number): string | null {
+  const next = nextAttemptAt(backoff.lastAttemptAt, backoff)
+  if (next === null || next <= now) return null
+  return formatBackoffInterval(next - now)
+}
+
+/**
  * A small per-feed state chip for the settings panel (issue #23):
  * healthy / error (with the failure reason inline) / disabled. The failure
- * reason also appears in the hover tooltip.
+ * reason also appears in the hover tooltip, along with how long until the
+ * next attempt when the feed is suspended by retry backoff (issue #25).
  */
 export function FeedStatusChip(props: {
   feed: UserFeed
   status: FeedStatus | undefined
   now?: number
+  /** Per-feed retry backoff state, when available (issue #25). */
+  backoff?: FeedBackoffState
 }) {
-  const { feed, status, now } = props
-  const info = feedChipState(feed, status, now)
+  const { feed, status, now, backoff } = props
+  const info = feedChipState(feed, status, now, backoff)
   const tone =
     info.state === 'error'
       ? 'border-amber-accent/40 bg-amber-accent/10 text-amber-soft'
