@@ -296,3 +296,132 @@ describe('feed proxy — user feeds (issue #16)', () => {
     expect(aAgain.fromCache).toBeUndefined()
   })
 })
+
+describe('feed proxy — single-flight + env-configurable TTL (issue #27)', () => {
+  it('collapses concurrent calls for the same URL into one upstream fetch', async () => {
+    let resolveUpstream: (r: Response) => void = () => {}
+    // The upstream fetch hangs until we resolve it, so both proxy calls are
+    // in flight at the same instant — exactly the two-tabs polling scenario.
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveUpstream = resolve
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const pending = Promise.all([proxyFeedXml(OPENAI), proxyFeedXml(OPENAI)])
+    // Both calls have entered the proxy; only one may have touched the network.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    resolveUpstream(new Response(SAMPLE, { status: 200 }))
+    const [first, second] = await pending
+
+    expect(first).toMatchObject({ ok: true, status: 200, body: SAMPLE })
+    expect(second).toMatchObject({ ok: true, status: 200, body: SAMPLE })
+  })
+
+  it('dedupes only concurrent calls — once settled, the cache serves repeats', async () => {
+    const fetchMock = vi.fn(async () => new Response(SAMPLE, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const [a, b] = await Promise.all([proxyFeedXml(OPENAI), proxyFeedXml(OPENAI)])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(a.body).toBe(SAMPLE)
+    expect(b.body).toBe(SAMPLE)
+
+    // After the in-flight promise has settled, the TTL cache takes over.
+    const later = await proxyFeedXml(OPENAI)
+    expect(later.fromCache).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('a failed in-flight fetch is released — the next call retries upstream', async () => {
+    let resolveUpstream: (r: Response) => void = () => {}
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveUpstream = resolve
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const pending = Promise.all([proxyFeedXml(OPENAI), proxyFeedXml(OPENAI)])
+    resolveUpstream(new Response('boom', { status: 500 }))
+    const [first, second] = await pending
+    expect(first).toMatchObject({ ok: false, status: 500 })
+    expect(second).toMatchObject({ ok: false, status: 500 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // The failure must not keep a placeholder in the in-flight map: the
+    // retry issues a fresh request.
+    const fetchRetry = vi.fn(async () => new Response(SAMPLE, { status: 200 }))
+    vi.stubGlobal('fetch', fetchRetry)
+    const retried = await proxyFeedXml(OPENAI)
+    expect(retried).toMatchObject({ ok: true, status: 200 })
+    expect(fetchRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves the TTL from the FEED_PROXY_TTL_MS env override', async () => {
+    let fakeNow = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => fakeNow)
+    const previous = process.env.FEED_PROXY_TTL_MS
+    process.env.FEED_PROXY_TTL_MS = '1000'
+
+    try {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response(SAMPLE, { status: 200 }))
+        .mockResolvedValueOnce(new Response(SAMPLE, { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+
+      await proxyFeedXml(OPENAI)
+
+      // Just under the 1s env TTL: served from cache, no second fetch.
+      fakeNow += 999
+      const within = await proxyFeedXml(OPENAI)
+      expect(within.fromCache).toBe(true)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      // Past the 1s env TTL: revalidated against the upstream.
+      fakeNow += 2
+      await proxyFeedXml(OPENAI)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.restoreAllMocks()
+      if (previous === undefined) delete process.env.FEED_PROXY_TTL_MS
+      else process.env.FEED_PROXY_TTL_MS = previous
+    }
+  })
+
+  it('falls back to the default TTL when the env override is invalid', async () => {
+    let fakeNow = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => fakeNow)
+    const previous = process.env.FEED_PROXY_TTL_MS
+    process.env.FEED_PROXY_TTL_MS = 'not-a-number'
+
+    try {
+      const fetchMock = vi.fn(async () => new Response(SAMPLE, { status: 200 }))
+      vi.stubGlobal('fetch', fetchMock)
+
+      await proxyFeedXml(OPENAI)
+
+      // Under the *default* 120s TTL, 60s on is still within the window.
+      fakeNow += 60_000
+      const within = await proxyFeedXml(OPENAI)
+      expect(within.fromCache).toBe(true)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      // A negative/zero override is equally rejected: 119s total elapsed is
+      // still under the default 120s TTL, so this is served from cache too.
+      process.env.FEED_PROXY_TTL_MS = '-5'
+      fakeNow += 59_000
+      const still = await proxyFeedXml(OPENAI)
+      expect(still.fromCache).toBe(true)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.restoreAllMocks()
+      if (previous === undefined) delete process.env.FEED_PROXY_TTL_MS
+      else process.env.FEED_PROXY_TTL_MS = previous
+    }
+  })
+})

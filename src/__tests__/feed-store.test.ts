@@ -145,6 +145,55 @@ describe('useUserFeedStore — persistence round-trip', () => {
   })
 })
 
+describe('useUserFeedStore — pause (issue #26)', () => {
+  it('adds feeds un-paused by default', () => {
+    const res = useUserFeedStore.getState().addFeed({ url: 'https://example.com/feed.xml' })
+    expect(res.ok).toBe(true)
+    if (res.ok) expect(res.feed.paused).toBe(false)
+  })
+
+  it('toggles the paused flag by normalised URL', () => {
+    useUserFeedStore.getState().addFeed({ url: 'https://example.com/feed.xml' })
+    useUserFeedStore.getState().togglePause('https://example.com/feed.xml')
+    expect(useUserFeedStore.getState().userFeeds[0].paused).toBe(true)
+    // Trailing-slash variant of the same feed still matches.
+    useUserFeedStore.getState().togglePause('https://example.com/feed.xml/')
+    expect(useUserFeedStore.getState().userFeeds[0].paused).toBe(false)
+  })
+
+  it('only touches the matched feed and leaves `enabled` untouched', () => {
+    useUserFeedStore.getState().addFeed({ url: 'https://a.com/feed.xml' })
+    useUserFeedStore.getState().addFeed({ url: 'https://b.com/feed.xml' })
+    useUserFeedStore.getState().togglePause('https://a.com/feed.xml')
+    expect(useUserFeedStore.getState().userFeeds[0].paused).toBe(true)
+    expect(useUserFeedStore.getState().userFeeds[1].paused).toBe(false)
+    // Pausing is orthogonal to the enabled toggle.
+    expect(useUserFeedStore.getState().userFeeds[0].enabled).toBe(true)
+  })
+
+  it('ignores an unknown URL', () => {
+    useUserFeedStore.getState().addFeed({ url: 'https://a.com/feed.xml' })
+    useUserFeedStore.getState().togglePause('https://nope.com/feed.xml')
+    expect(useUserFeedStore.getState().userFeeds[0].paused).toBe(false)
+  })
+
+  it('rehydrates a persisted paused flag (real round-trip)', async () => {
+    useUserFeedStore.setState({ userFeeds: [] })
+    const seed = {
+      state: {
+        userFeeds: [
+          { name: 'Paused', url: 'https://example.com/feed.xml', enabled: true, paused: true },
+        ],
+      },
+      version: 1,
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(seed))
+    await useUserFeedStore.persist.rehydrate()
+    expect(useUserFeedStore.getState().userFeeds).toHaveLength(1)
+    expect(useUserFeedStore.getState().userFeeds[0].paused).toBe(true)
+  })
+})
+
 describe('nameFromFeedUrl', () => {
   it('derives a title-cased host name, stripping www and TLD', () => {
     expect(nameFromFeedUrl('https://openai.com/blog/rss.xml')).toBe('Openai')

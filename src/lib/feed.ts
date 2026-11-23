@@ -298,11 +298,16 @@ function toStory(item: RSSItem, feedCategory?: string): Story {
  * removing a feed takes effect on the *next* refresh without a reload. The
  * user list is de-duplicated against the built-in list by normalised URL, in
  * case the user adds a feed that already ships with the app.
+ *
+ * Paused user feeds are excluded too (issue #26): pausing is orthogonal to
+ * `enabled` — a paused feed stays enabled in the UI (so its chip keeps showing
+ * the last known status) but the poller skips it, so a stale/annoying source
+ * stops burning a fetch every interval until the user un-pauses it.
  */
 export function getActiveFeeds(userFeeds: readonly UserFeed[] = []): RSSFeedConfig[] {
   const builtInKeys = new Set(RSS_FEEDS.map((f) => normalizeFeedKey(f.url)))
   const user = userFeeds.filter(
-    (f) => f.enabled && !builtInKeys.has(normalizeFeedKey(f.url)),
+    (f) => f.enabled && !f.paused && !builtInKeys.has(normalizeFeedKey(f.url)),
   )
   return [...RSS_FEEDS, ...user]
 }

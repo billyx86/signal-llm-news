@@ -246,6 +246,17 @@ describe('getActiveFeeds', () => {
     const userFeeds = [{ name: 'Case Dup', url: url.toString(), enabled: true }]
     expect(getActiveFeeds(userFeeds)).toHaveLength(RSS_FEEDS.length)
   })
+
+  it('excludes paused user feeds even when they are enabled (issue #26)', () => {
+    const userFeeds = [
+      { name: 'Paused', url: 'https://paused.example/rss.xml', enabled: true, paused: true },
+      { name: 'Active', url: 'https://active.example/rss.xml', enabled: true, paused: false },
+    ]
+    const active = getActiveFeeds(userFeeds)
+    expect(active).toHaveLength(RSS_FEEDS.length + 1)
+    expect(active.map((f) => f.name)).not.toContain('Paused')
+    expect(active.map((f) => f.name)).toContain('Active')
+  })
 })
 
 describe('feedCategoryByName', () => {
@@ -344,6 +355,30 @@ describe('useFeedStore.refresh — user feeds (issue #16)', () => {
       String(u).includes('myblog.example'),
     )
     expect(calledForUserFeed).toBe(false)
+    expect(useFeedStore.getState().feedStatuses).toHaveLength(RSS_FEEDS.length)
+  })
+
+  it('does not fetch a user feed the user has paused (issue #26)', async () => {
+    const res = useUserFeedStore
+      .getState()
+      .addFeed({ url: USER_FEED_URL, name: 'My Blog' })
+    if (!res.ok) throw new Error(res.reason)
+    // Paused, but still enabled — the pause alone must halt polling.
+    useUserFeedStore.getState().togglePause(USER_FEED_URL)
+
+    const fetchMock = vi.fn(async (_url: string) => {
+      throw new TypeError('Failed to fetch')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await useFeedStore.getState().refresh()
+
+    // No request should have gone out for the paused user feed.
+    const calledForUserFeed = fetchMock.mock.calls.some(([u]) =>
+      String(u).includes('myblog.example'),
+    )
+    expect(calledForUserFeed).toBe(false)
+    // ...and no status row is recorded for it (the poller never touched it).
     expect(useFeedStore.getState().feedStatuses).toHaveLength(RSS_FEEDS.length)
   })
 

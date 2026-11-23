@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, Radio, Settings2, Trash2 } from 'lucide-react'
+import { Pause, Play, Plus, Radio, Settings2, Trash2 } from 'lucide-react'
 import { TOPICS } from '@/data/news'
 import {
   useUserFeedStore,
@@ -38,6 +38,7 @@ export function FeedSettings() {
   const addFeed = useUserFeedStore((s) => s.addFeed)
   const removeFeed = useUserFeedStore((s) => s.removeFeed)
   const toggleFeed = useUserFeedStore((s) => s.toggleFeed)
+  const togglePause = useUserFeedStore((s) => s.togglePause)
   const renameFeed = useUserFeedStore((s) => s.renameFeed)
   // Per-feed status from the last refresh (issue #23). The pipeline already
   // records one `FeedStatus` per active feed (including user feeds, merged in
@@ -239,6 +240,7 @@ export function FeedSettings() {
                     data-testid="feed-settings-row"
                     data-feed-url={feed.url}
                     data-enabled={feed.enabled}
+                    data-paused={feed.paused ?? false}
                     className="flex items-center gap-2 rounded-sm bg-ink-950/50 px-2.5 py-2"
                   >
                     <span
@@ -303,6 +305,32 @@ export function FeedSettings() {
                         >
                           Edit
                         </button>
+                        {feed.enabled && (
+                          <button
+                            type="button"
+                            aria-label={
+                              feed.paused ? `Resume ${feed.name}` : `Pause ${feed.name}`
+                            }
+                            title={
+                              feed.paused
+                                ? 'Resume polling this feed'
+                                : 'Pause polling this feed (it stays enabled)'
+                            }
+                            onClick={() => togglePause(feed.url)}
+                            className={`shrink-0 inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[10px] font-medium ${
+                              feed.paused
+                                ? 'border-amber-accent/40 text-amber-soft'
+                                : 'border-ink-700 text-ink-400 hover:text-ink-200'
+                            }`}
+                          >
+                            {feed.paused ? (
+                              <Play className="h-3 w-3" />
+                            ) : (
+                              <Pause className="h-3 w-3" />
+                            )}
+                            {feed.paused ? 'Resume' : 'Pause'}
+                          </button>
+                        )}
                         <button
                           type="button"
                           aria-label={`Toggle ${feed.name}`}
