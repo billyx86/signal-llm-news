@@ -28,22 +28,31 @@
  *    and the proxy fetches the guard's *normalised* URL, never the raw
  *    user input.
  *
- * **Caching (issue #17):** every client polls this proxy every
- * `REFRESH_INTERVAL_MS`, and multiple tabs/users poll the same upstream
- * feeds — without a cache the proxy would re-fetch the same upstream document
- * on every request, wasting bandwidth and adding rate-limit pressure on
- * upstream publishers. The proxy now keeps one in-process entry per
- * allowlisted URL:
+ * **Caching (issue #17) + single-flight (issue #27):** every client polls
+ * this proxy every `REFRESH_INTERVAL_MS`, and multiple tabs/users poll the
+ * same upstream feeds — without a cache the proxy would re-fetch the same
+ * upstream document on every request, wasting bandwidth and adding
+ * rate-limit pressure on upstream publishers. The proxy now keeps one
+ * in-process entry per allowlisted URL:
  *
- * - while within {@link FEED_CACHE_TTL_MS} of the last upstream fetch, the
- *   cached body is served with **no** network call;
+ * - while within the TTL of the last upstream fetch, the cached body is
+ *   served with **no** network call. The TTL defaults to
+ *   {@link DEFAULT_FEED_CACHE_TTL_MS} (120 s) and is overridable per
+ *   deployment with the `FEED_PROXY_TTL_MS` env var (see
+ *   {@link resolveFeedCacheTtlMs});
  * - once the TTL expires, the next upstream request carries `If-None-Match`
  *   / `If-Modified-Since` (from the cached `ETag` / `Last-Modified`), and a
  *   `304 Not Modified` reuses the cached body (the TTL is extended — the
  *   upstream has just re-certified it);
  * - only `2xx` responses are cached. A failed fetch never poisons the cache,
  *   so the next request retries immediately, and the stale entry is kept
- *   only as a revalidation source.
+ *   only as a revalidation source;
+ * - **concurrent** requests for the same URL are collapsed into one upstream
+ *   fetch via an in-flight promise map (issue #27): the TTL cache alone
+ *   cannot dedupe two tabs that poll at the same instant, because neither
+ *   has a cache entry when its request starts. The in-flight entry is
+ *   released as soon as the fetch settles — success *and* failure — so a
+ *   failed fetch never shadows the retry.
  *
  * The cache is bounded by {@link MAX_FEED_CACHE_ENTRIES} with LRU eviction
  * (user feeds, issue #16, make the set of fetchable URLs unbounded, so a cap
@@ -76,11 +85,51 @@ interface FeedCacheEntry {
 }
 
 /**
- * How long a fetched feed body is served from cache without revalidating
- * against the upstream. The client polls every 5 minutes, so this mainly
- * deduplicates bursts (several tabs/users refreshing around the same time).
+ * The in-process cache TTL in *milliseconds*: how long a fetched feed body
+ * is served from cache before the next request revalidates against the
+ * upstream. The client polls every 5 minutes, so this mainly deduplicates
+ * bursts (several tabs/users refreshing around the same time, issue #27).
+ *
+ * The default is 120 s; operators can override it per-deployment with the
+ * `FEED_PROXY_TTL_MS` env var (a positive integer number of milliseconds).
+ * An unset or invalid value falls back to the default, so a mistyped env
+ * var can never zero out the cache or hang revalidation.
  */
-export const FEED_CACHE_TTL_MS = 120_000
+export const DEFAULT_FEED_CACHE_TTL_MS = 120_000
+
+/** Resolve the active TTL from the environment, falling back to the default. */
+export function resolveFeedCacheTtlMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.FEED_PROXY_TTL_MS
+  if (raw === undefined || raw === '') return DEFAULT_FEED_CACHE_TTL_MS
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_FEED_CACHE_TTL_MS
+  return parsed
+}
+
+/**
+ * Backwards-compatible alias for the *default* TTL (tests and docs reference
+ * the constant); the *active* TTL at runtime is {@link resolveFeedCacheTtlMs}.
+ */
+export const FEED_CACHE_TTL_MS = DEFAULT_FEED_CACHE_TTL_MS
+
+/**
+ * In-flight fetch promises, keyed by the resolved fetchable URL (issue #27).
+ *
+ * The per-process TTL cache only collapses requests that arrive *after* the
+ * first one has settled — two tabs polling the same feed at the same instant
+ * (each running its own 5-minute `useLiveFeed` interval, see #22) still
+ * produce two upstream requests because neither sees a cache entry when it
+ * starts. The in-flight map fixes that race: the first caller registers its
+ * promise, and every caller that arrives while it is pending awaits the same
+ * promise, so N concurrent tabs cost exactly one upstream fetch. The entry is
+ * removed as soon as the promise settles (success **and** failure), so a
+ * failed fetch never shadows the retry — a retry that starts after the
+ * failure is a fresh request, which is what the "failed fetches never poison
+ * the cache" rule above requires.
+ */
+const inFlight = new Map<string, Promise<FeedProxyResult>>()
 
 const cache = new Map<string, FeedCacheEntry>()
 let cacheHits = 0
@@ -91,9 +140,10 @@ export function feedCacheStats(): { hits: number; misses: number; entries: numbe
   return { hits: cacheHits, misses: cacheMisses, entries: cache.size }
 }
 
-/** Drop all cached entries and reset the counters (used by tests). */
+/** Drop all cached entries, reset the counters, and clear in-flight state (used by tests). */
 export function clearFeedCache(): void {
   cache.clear()
+  inFlight.clear()
   cacheHits = 0
   cacheMisses = 0
 }
@@ -153,7 +203,8 @@ function resolveFetchableUrl(url: string): string | null {
 
 /**
  * Fetch a feed's raw XML **on the server**, with a short-TTL cache and
- * `ETag`/`Last-Modified` revalidation (issue #17).
+ * `ETag`/`Last-Modified` revalidation (issue #17), and in-process
+ * single-flight deduplication of concurrent fetches (issue #27).
  *
  * @param url - The feed URL. Accepted only if it is an entry in the built-in
  *   {@link RSS_FEEDS} allowlist **or** it passes the SSRF-safe
@@ -169,9 +220,35 @@ export async function proxyFeedXml(url: string): Promise<FeedProxyResult> {
     return { ok: false, status: 403, body: 'Feed URL is not in the allowlist.' }
   }
 
+  // Single-flight (issue #27): if a fetch for this URL is already in flight,
+  // await the same promise instead of issuing a second upstream request. This
+  // is what collapses the N-tabs-poll-at-the-same-instant burst the TTL cache
+  // alone cannot catch — neither concurrent caller has a cache entry yet.
+  const existing = inFlight.get(fetchableUrl)
+  if (existing) return existing
+
+  const flight = fetchWithTtlCache(fetchableUrl)
+  inFlight.set(fetchableUrl, flight)
+  try {
+    return await flight
+  } finally {
+    // Released on success *and* failure, so a failed fetch never shadows the
+    // retry (a retry that starts after the failure is a fresh request).
+    inFlight.delete(fetchableUrl)
+  }
+}
+
+/**
+ * The per-URL fetch pipeline: TTL cache hit → revalidating fetch → 304 reuse,
+ * exactly as documented in the module header. Split from {@link proxyFeedXml}
+ * so the single-flight wrapper can share one in-flight promise across
+ * concurrent callers (issue #27).
+ */
+async function fetchWithTtlCache(fetchableUrl: string): Promise<FeedProxyResult> {
+  const ttl = resolveFeedCacheTtlMs()
   const now = Date.now()
   const entry = cache.get(fetchableUrl)
-  if (entry && now - entry.fetchedAt < FEED_CACHE_TTL_MS) {
+  if (entry && now - entry.fetchedAt < ttl) {
     // Within the TTL: serve the cached body, no network call. Refresh the
     // entry's LRU position so a frequently-polled user feed is not evicted.
     setCacheEntry(fetchableUrl, entry)
