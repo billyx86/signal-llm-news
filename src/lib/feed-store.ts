@@ -14,9 +14,15 @@ type PersistedUserFeeds = {
 /**
  * A feed the user adds themselves (issue #16). Same shape as the built-in
  * {@link RSSFeedConfig}, so the refresh pipeline can treat user and built-in
- * feeds identically once they are merged (see `feed.ts`).
+ * feeds identically once they are merged (see `feed.ts`), plus a `paused`
+ * flag (issue #26): a paused feed stays listed and enabled in the UI but is
+ * skipped by the poller, so a stale/annoying source stops burning fetches
+ * without being removed or disabled.
  */
-export type UserFeed = RSSFeedConfig
+export type UserFeed = RSSFeedConfig & {
+  /** When true the poller skips this feed until it is un-paused (issue #26). */
+  paused?: boolean
+}
 
 export type AddFeedInput = {
   name?: string
@@ -40,6 +46,11 @@ interface UserFeedState {
   removeFeed: (url: string) => void
   /** Toggle a user feed's enabled flag, matched by URL. */
   toggleFeed: (url: string) => void
+  /**
+   * Toggle a user feed's paused flag, matched by URL (issue #26). A paused
+   * feed is skipped by the poller; it stays enabled in the UI.
+   */
+  togglePause: (url: string) => void
   /** Rename a user feed, matched by URL. */
   renameFeed: (url: string, name: string) => void
   clearUserFeeds: () => void
@@ -108,6 +119,7 @@ export const useUserFeedStore = create<UserFeedState>()(
           name,
           url: urlRes.url,
           enabled: true,
+          paused: false,
           ...(input.category ? { category: input.category } : {}),
         }
         set((s) => ({ userFeeds: [...s.userFeeds, feed] }))
@@ -126,6 +138,15 @@ export const useUserFeedStore = create<UserFeedState>()(
         set((s) => ({
           userFeeds: s.userFeeds.map((f) =>
             normalizeFeedKey(f.url) === key ? { ...f, enabled: !f.enabled } : f,
+          ),
+        }))
+      },
+
+      togglePause: (url) => {
+        const key = normalizeFeedKey(url)
+        set((s) => ({
+          userFeeds: s.userFeeds.map((f) =>
+            normalizeFeedKey(f.url) === key ? { ...f, paused: !f.paused } : f,
           ),
         }))
       },
