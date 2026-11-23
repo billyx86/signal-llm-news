@@ -146,6 +146,43 @@ describe('FeedSettings', () => {
     expect(row).toHaveAttribute('data-enabled', 'true')
   })
 
+  it('pauses a feed with the Pause control and resumes it (issue #26)', async () => {
+    const user = userEvent.setup()
+    useUserFeedStore.setState({
+      userFeeds: [
+        { name: 'My Blog', url: 'https://myblog.example/rss.xml', enabled: true, paused: false },
+      ],
+    })
+    render(<FeedSettings />)
+    await user.click(screen.getByRole('button', { name: 'Feed settings' }))
+
+    const row = screen.getByTestId('feed-settings-row')
+    expect(row).toHaveAttribute('data-paused', 'false')
+    const pauseBtn = within(row).getByRole('button', { name: 'Pause My Blog' })
+    expect(pauseBtn).toHaveTextContent('Pause')
+
+    // Pausing stops polling but keeps the feed enabled (not off).
+    expect(useUserFeedStore.getState().userFeeds[0].paused).toBe(false)
+    await user.click(pauseBtn)
+    expect(row).toHaveAttribute('data-paused', 'true')
+    expect(row).toHaveAttribute('data-enabled', 'true')
+    expect(useUserFeedStore.getState().userFeeds[0].paused).toBe(true)
+    expect(useUserFeedStore.getState().userFeeds[0].enabled).toBe(true)
+
+    // The chip reflects the paused state once the feed is paused.
+    const chip = within(row).getByTestId('feed-status-chip')
+    expect(chip).toHaveAttribute('data-chip-state', 'paused')
+    expect(chip).toHaveTextContent('paused')
+
+    // The control flips to Resume and the chip un-pauses.
+    const resumeBtn = within(row).getByRole('button', { name: 'Resume My Blog' })
+    expect(resumeBtn).toHaveTextContent('Resume')
+    await user.click(resumeBtn)
+    expect(row).toHaveAttribute('data-paused', 'false')
+    expect(chip).not.toHaveAttribute('data-chip-state', 'paused')
+    expect(useUserFeedStore.getState().userFeeds[0].paused).toBe(false)
+  })
+
   it('removes a feed', async () => {
     const user = userEvent.setup()
     useUserFeedStore.setState({

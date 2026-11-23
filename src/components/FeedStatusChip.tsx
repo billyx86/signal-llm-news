@@ -9,7 +9,7 @@ import {
 import { relativeTime } from '@/lib/time'
 
 /** The states the settings-panel chip can be in (issues #23, #26). */
-export type FeedChipState = 'healthy' | 'stale' | 'error' | 'disabled'
+export type FeedChipState = 'healthy' | 'stale' | 'error' | 'disabled' | 'paused'
 
 /** A chip's rendered label + tooltip, derived purely from the feed + last status. */
 export type FeedChipInfo = {
@@ -43,13 +43,19 @@ export type FeedChipInfo = {
  * available (e.g. the built-in feeds' rows render their own status elsewhere).
  */
 export function feedChipState(
-  feed: { enabled: boolean; name: string },
+  feed: { enabled: boolean; name: string; paused?: boolean },
   status: FeedStatus | undefined,
   now = Date.now(),
   backoff?: FeedBackoffState,
 ): FeedChipInfo {
   if (!feed.enabled) {
     return { state: 'disabled', label: 'off', title: `${feed.name} — disabled` }
+  }
+  // A paused feed (issue #26) is the salient fact: it wins over a fresh ok
+  // status and even a recent error, so the user sees at a glance which feeds
+  // they have snoozed. `disabled` still wins — off is off.
+  if (feed.paused) {
+    return { state: 'paused', label: 'paused', title: `${feed.name} — paused (not polling)` }
   }
   if (status && !status.ok) {
     const reason = status.reason ?? 'unknown error'
@@ -119,9 +125,11 @@ export function FeedStatusChip(props: {
       ? 'border-amber-accent/40 bg-amber-accent/10 text-amber-soft'
       : info.state === 'stale'
         ? 'border-amber-dim/40 bg-amber-dim/10 text-amber-dim'
-        : info.state === 'disabled'
-          ? 'border-ink-700 bg-ink-950/40 text-ink-500'
-          : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300'
+        : info.state === 'paused'
+          ? 'border-ink-600 bg-ink-900/60 text-ink-400'
+          : info.state === 'disabled'
+            ? 'border-ink-700 bg-ink-950/40 text-ink-500'
+            : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300'
   return (
     <span
       data-testid="feed-status-chip"

@@ -132,6 +132,32 @@ describe('feedChipState (pure helper)', () => {
     expect(info.state).toBe('healthy')
     expect(info.label).toBe('ok')
   })
+
+  it('is a visible "paused" state when the feed is paused, regardless of its last status (issue #26)', () => {
+    // Pause wins over a fresh ok status…
+    const fresh = feedChipState(
+      userFeed({ url: 'https://a.com/x', paused: true }),
+      status({ ok: true, fetchedAt: recent }),
+      now,
+    )
+    expect(fresh.state).toBe('paused')
+    expect(fresh.label).toBe('paused')
+    // …and over an error status (the pause is the salient fact the user set).
+    const errored = feedChipState(
+      userFeed({ url: 'https://a.com/x', paused: true }),
+      status({ ok: false, status: 500, reason: 'HTTP 500' }),
+      now,
+    )
+    expect(errored.state).toBe('paused')
+    expect(errored.label).toBe('paused')
+    // But a *disabled* feed still wins — off is off.
+    const off = feedChipState(
+      userFeed({ url: 'https://a.com/x', enabled: false, paused: true }),
+      status({ ok: true }),
+      now,
+    )
+    expect(off.state).toBe('disabled')
+  })
 })
 
 describe('FeedStatusChip (component)', () => {
@@ -226,5 +252,18 @@ describe('FeedStatusChip (component)', () => {
     expect(chip).toHaveAttribute('data-chip-state', 'stale')
     // The label is visible inline, not only in the tooltip.
     expect(chip).toHaveTextContent('stale')
+  })
+
+  it('renders the visible "paused" state with data-chip-state="paused" (issue #26)', () => {
+    render(
+      <FeedStatusChip
+        feed={userFeed({ url: 'https://a.com/x', paused: true })}
+        status={status({ ok: true, fetchedAt: recent })}
+        now={now}
+      />,
+    )
+    const chip = screen.getByTestId('feed-status-chip')
+    expect(chip).toHaveAttribute('data-chip-state', 'paused')
+    expect(chip).toHaveTextContent('paused')
   })
 })
