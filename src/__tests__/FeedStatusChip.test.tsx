@@ -108,6 +108,30 @@ describe('feedChipState (pure helper)', () => {
     expect(info.state).toBe('error')
     expect(info.title).not.toContain('retrying in')
   })
+
+  it('is a visible "stale" state (not just a tooltip prefix) when the last ok fetch is older than the stale window (issue #26)', () => {
+    // Just past 2 × REFRESH_INTERVAL_MS (10m) → classifyFeedHealth says stale.
+    const staleAt = new Date(now - 2 * (5 * 60_000) - 1_000).toISOString()
+    const info = feedChipState(
+      userFeed({ url: 'https://a.com/x' }),
+      status({ ok: true, fetchedAt: staleAt }),
+      now,
+    )
+    expect(info.state).toBe('stale')
+    expect(info.label).toBe('stale')
+    // The item count + age stay in the tooltip.
+    expect(info.title).toContain('3 items')
+  })
+
+  it('stays healthy (not stale) when the last ok fetch is within the stale window (issue #26)', () => {
+    const info = feedChipState(
+      userFeed({ url: 'https://a.com/x' }),
+      status({ ok: true, fetchedAt: recent }),
+      now,
+    )
+    expect(info.state).toBe('healthy')
+    expect(info.label).toBe('ok')
+  })
 })
 
 describe('FeedStatusChip (component)', () => {
@@ -187,5 +211,20 @@ describe('FeedStatusChip (component)', () => {
       'title',
       expect.stringContaining('retrying in 44m'),
     )
+  })
+
+  it('renders the visible "stale" state with data-chip-state="stale" (issue #26)', () => {
+    const staleAt = new Date(now - 2 * (5 * 60_000) - 1_000).toISOString()
+    render(
+      <FeedStatusChip
+        feed={userFeed({ url: 'https://a.com/x' })}
+        status={status({ ok: true, fetchedAt: staleAt })}
+        now={now}
+      />,
+    )
+    const chip = screen.getByTestId('feed-status-chip')
+    expect(chip).toHaveAttribute('data-chip-state', 'stale')
+    // The label is visible inline, not only in the tooltip.
+    expect(chip).toHaveTextContent('stale')
   })
 })

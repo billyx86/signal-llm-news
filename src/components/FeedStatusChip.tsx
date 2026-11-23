@@ -8,8 +8,8 @@ import {
 } from '@/lib/feed'
 import { relativeTime } from '@/lib/time'
 
-/** The three states the settings-panel chip can be in (issue #23). */
-export type FeedChipState = 'healthy' | 'error' | 'disabled'
+/** The states the settings-panel chip can be in (issues #23, #26). */
+export type FeedChipState = 'healthy' | 'stale' | 'error' | 'disabled'
 
 /** A chip's rendered label + tooltip, derived purely from the feed + last status. */
 export type FeedChipInfo = {
@@ -63,11 +63,23 @@ export function feedChipState(
   }
   if (status && status.ok) {
     const health = classifyFeedHealth(status, now)
-    const stalePrefix = health === 'stale' ? 'stale · ' : ''
+    if (health === 'stale') {
+      // A stale-but-ok feed gets its own *visible* state (issue #26): the
+      // label is no longer a plain "ok" with a tooltip-only "stale · " prefix,
+      // so users can see at a glance which feeds have stopped delivering
+      // fresh items and can pause them.
+      return {
+        state: 'stale',
+        label: 'stale',
+        title: `${feed.name} — stale · ${status.itemCount} item${
+          status.itemCount === 1 ? '' : 's'
+        } · ${relativeTime(status.fetchedAt, now)}`,
+      }
+    }
     return {
       state: 'healthy',
       label: 'ok',
-      title: `${feed.name} — ${stalePrefix}${status.itemCount} item${
+      title: `${feed.name} — ${status.itemCount} item${
         status.itemCount === 1 ? '' : 's'
       } · ${relativeTime(status.fetchedAt, now)}`,
     }
@@ -105,9 +117,11 @@ export function FeedStatusChip(props: {
   const tone =
     info.state === 'error'
       ? 'border-amber-accent/40 bg-amber-accent/10 text-amber-soft'
-      : info.state === 'disabled'
-        ? 'border-ink-700 bg-ink-950/40 text-ink-500'
-        : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300'
+      : info.state === 'stale'
+        ? 'border-amber-dim/40 bg-amber-dim/10 text-amber-dim'
+        : info.state === 'disabled'
+          ? 'border-ink-700 bg-ink-950/40 text-ink-500'
+          : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300'
   return (
     <span
       data-testid="feed-status-chip"
