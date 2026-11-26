@@ -31,8 +31,11 @@ export const TOPICS = Object.freeze([
   'Tools'
 ] as const)
 
+// Fixed anchor timestamp so the seeded archive is deterministic across builds,
+// SSR hydration, tests, and the generated public/sitemap.xml (#32).
+const ARCHIVE_ANCHOR_MS = Date.parse('2026-11-26T00:00:00.000Z')
 const hoursAgo = (h: number) =>
-  new Date(Date.now() - h * 60 * 60 * 1000).toISOString()
+  new Date(ARCHIVE_ANCHOR_MS - h * 60 * 60 * 1000).toISOString()
 
 export const stories: Story[] = [
   {

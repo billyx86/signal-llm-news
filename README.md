@@ -57,6 +57,10 @@ src/
 
 Cool ink neutrals, single amber accent, magazine density, hairline dividers, strong type hierarchy. Not purple AI gradient slop.
 
+## SEO
+
+Per-route `<title>`, Open Graph, Twitter Card, and canonical link metadata are built from a single source of truth in `src/lib/seo.ts`, where the canonical `SITE_ORIGIN` is set to the project Pages URL (`https://billyx86.github.io/signal-llm-news`). Crawler artefacts (`public/sitemap.xml` and `public/robots.txt`) are committed in `public/` and guarded against drift by `src/__tests__/seo-assets.test.ts`; whenever the seeded story archive in `src/data/news.ts` changes, re-run the builders (`buildSitemapXml(stories)` and `buildRobotsTxt()`) and commit both files.
+
 ---
 
 ## RSS Integration & Ingestion API

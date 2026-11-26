@@ -7,8 +7,15 @@ import { useBookmarkStore } from '@/lib/store'
 import { useFeedStore } from '@/lib/feed'
 import { ShareButton } from '@/components/ShareButton'
 import { useShareStore } from '@/lib/share-store'
+import { storyHead, storyNotFoundHead } from '@/lib/seo'
 
 export const Route = createFileRoute('/story/$id')({
+  // Resolve against the seeded archive for SSR/SEO (#30); live-only stories
+  // still render client-side and fall back to the noindex head.
+  head: ({ params }) => {
+    const story = getStoryById(params.id)
+    return story ? storyHead(story) : storyNotFoundHead()
+  },
   component: StoryPage,
 })
 
