@@ -14,6 +14,7 @@ import {
 import { useBookmarkStore } from '@/lib/store'
 import { useKeyboardShortcuts } from '@/lib/keyboard'
 import { useFeedAutoRefresh, useFeedStore, mergeStories } from '@/lib/feed'
+import { homeHead } from '@/lib/seo'
 
 const searchSchema = z.object({
   topic: z
@@ -26,6 +27,7 @@ const searchSchema = z.object({
 
 export const Route = createFileRoute('/')({
   validateSearch: searchSchema,
+  head: () => homeHead(),
   component: HomePage,
 })
 

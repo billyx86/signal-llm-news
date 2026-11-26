@@ -9,6 +9,7 @@ import type { ReactNode } from 'react'
 import { Header } from '@/components/Header'
 import { FeedHealth } from '@/components/FeedHealth'
 import { Footer } from '@/components/Footer'
+import { SITE_DESCRIPTION } from '@/lib/seo'
 import appCss from '@/styles.css?url'
 
 export const Route = createRootRoute({
@@ -19,8 +20,7 @@ export const Route = createRootRoute({
       { title: 'Signal — LLM & AI News' },
       {
         name: 'description',
-        content:
-          'Signal is an editorial aggregator for LLM and AI news — models, research, open source, policy, industry, and tools.',
+        content: SITE_DESCRIPTION,
       },
       { name: 'theme-color', content: '#0c0d0f' },
     ],
